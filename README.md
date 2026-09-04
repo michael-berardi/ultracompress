@@ -65,7 +65,7 @@ Full methodology and every run in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 | benchmark | stock Pi | pi-vcc | Rapid Compact |
 |---|---|---|---|
-| Post-compaction context (9 real sessions) | ↓ 75.8% | ↓ 79.7% | **↓ 80.0%** |
+| Post-compaction context (12 real sessions) | ↓ 79.8% | ↓ 78.8% | ↓ 79.0% (at parity, $0) |
 | Facts recoverable after compaction | 0% | 94.4% | **94.4%** |
 | Compaction API cost | 1 LLM call each | $0 | **$0** |
 | Summary determinism | none | byte-exact | **byte-exact** |

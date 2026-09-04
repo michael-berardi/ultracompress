@@ -32,6 +32,7 @@ const argOf = (name, dflt) => {
 const RC = argOf("--rc", path.join(repo, "target", "release", "rc"));
 const OUT = argOf("--out", null);
 const MIN_MESSAGES = 30; // only sessions big enough to ever compact
+const MIN_RAW_TOKENS = parseInt(argOf("--min-raw", "40000"), 10); // compaction comparisons are meaningless below this
 const STOCK_SUMMARY_TOKENS = 1200; // Pi's structured LLM summary, ~1.2k tokens
 const STOCK_KEEP_RECENT = 20_000; // Pi default keepRecentTokens
 
@@ -139,6 +140,7 @@ for (const file of sessionFiles()) {
     }
     const autoAfter = Math.max(summaryTokens, auto.stats.tokens_after_est - transformSaved);
 
+    if (raw < MIN_RAW_TOKENS) continue; // below compaction territory
     results.push({
       file: path.basename(file).slice(0, 18),
       msgs: messages.length,
