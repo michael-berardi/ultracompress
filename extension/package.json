@@ -1,0 +1,40 @@
+{
+  "name": "rapid-compact",
+  "version": "0.1.0",
+  "description": "Rapid Compact — content-aware compaction for Pi: deterministic VCC briefs, snap frames for bulky tool output, optional UltraCompact (UC) packets, lossless recall. By Implose Cybernetics.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.ts",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "rapid-compact",
+    "compaction",
+    "vcc",
+    "snapcompact",
+    "ultracompact"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sting8k/rapid-compact.git"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.0 <1.0.0",
+    "typebox": ">=1.1.24 <2.0.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@types/node": "^26.4.1",
+    "typebox": "^1.3.25",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

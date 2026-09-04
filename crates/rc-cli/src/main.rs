@@ -1,0 +1,331 @@
+//! `rc` — the Rapid Compact CLI.
+//!
+//! Subcommands:
+//!   rc plan        dry-run: policy decisions + token estimates, no frames
+//!   rc compact     full compaction result (summary, details, stats)
+//!   rc transform   live-context ops: UC packets + snap frames per block
+//!   rc recall      ranked lossless search over a raw session JSONL
+//!   rc stats       per-role content breakdown of a session
+//!   rc frames      render text to PNG frames (debugging / standalone use)
+//!   rc uc          UC packet encode/decode bridge (degrades to plain JSON)
+//!   rc version     print version
+//!
+//! Input: `--session FILE` (Pi session JSONL) or stdin JSON `{ "entries": [...] }`
+//! (the extension contract). Output: JSON on stdout, diagnostics on stderr.
+
+use rc_core::compact::{run, CompactInput};
+use rc_core::load::{load_session, read_stdin};
+use rc_core::policy::{Policy, VisionMode};
+use rc_core::recall::{search, RecallOptions};
+use rc_core::snap::{render_frames, SnapConfig};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+fn die(msg: &str) -> ! {
+    eprintln!("rc: {msg}");
+    std::process::exit(2);
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cmd = args.first().map(|s| s.as_str()).unwrap_or_else(|| die("usage: rc <plan|compact|recall|stats|frames|version> [options]"));
+
+    match cmd {
+        "version" | "--version" | "-V" => {
+            println!("rc {} (rapid-compact)", rc_core::VERSION);
+        }
+        "plan" => main_plan(&args[1..], true),
+        "compact" => main_plan(&args[1..], false),
+        "transform" => main_transform(&args[1..]),
+        "recall" => main_recall(&args[1..]),
+        "stats" => main_stats(&args[1..]),
+        "uc" => main_uc(&args[1..]),
+        "frames" => main_frames(&args[1..]),
+        other => die(&format!("unknown command '{other}'")),
+    }
+}
+
+struct Cli {
+    session: Option<PathBuf>,
+    policy: Policy,
+    keep: Option<usize>,
+    smart: bool,
+    vision: VisionMode,
+    uc_bin: String,
+    uc_enabled: bool,
+    snap_min: usize,
+    uc_min: usize,
+    cols: usize,
+    rows: usize,
+    query: Option<String>,
+    regex: bool,
+    scope_all: bool,
+    page: usize,
+    per_page: usize,
+    image_tokens: Option<u64>,
+    label: String,
+}
+
+fn parse_cli(args: &[String]) -> Cli {
+    let mut c = Cli {
+        session: None,
+        policy: Policy::Auto,
+        keep: None,
+        smart: true,
+        vision: VisionMode::Auto,
+        uc_bin: "uc".into(),
+        uc_enabled: true,
+        snap_min: 6000,
+        uc_min: 1200,
+        cols: 160,
+        rows: 100,
+        query: None,
+        regex: false,
+        scope_all: false,
+        page: 1,
+        per_page: 5,
+        image_tokens: None,
+        label: "text".into(),
+    };
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let val = |i: &mut usize| -> String {
+            *i += 1;
+            args.get(*i).cloned().unwrap_or_else(|| die("missing option value"))
+        };
+        match a {
+            "--session" => c.session = Some(PathBuf::from(val(&mut i))),
+            "--policy" => {
+                c.policy = Policy::parse(&val(&mut i)).unwrap_or_else(|| die("bad --policy (auto|vcc|snap|uc)"))
+            }
+            "--keep-user-turns" => c.keep = Some(val(&mut i).parse().unwrap_or_else(|_| die("bad keep value"))),
+            "--keep" => c.keep = Some(val(&mut i).parse().unwrap_or_else(|_| die("bad keep value"))),
+            "--keep-default" => c.keep = None,
+            "--no-smart-keep" => c.smart = false,
+            "--vision" => {
+                c.vision = match val(&mut i).to_lowercase().as_str() {
+                    "on" => VisionMode::On,
+                    "off" => VisionMode::Off,
+                    _ => VisionMode::Auto,
+                }
+            }
+            "--uc-bin" => c.uc_bin = val(&mut i),
+            "--no-uc" => c.uc_enabled = false,
+            "--uc-min-chars" => c.uc_min = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
+            "--snap-min-chars" => c.snap_min = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
+            "--cols" => c.cols = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
+            "--rows" => c.rows = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
+            "--image-tokens-per-frame" => c.image_tokens = Some(val(&mut i).parse().unwrap_or_else(|_| die("bad number"))),
+            "--query" => c.query = Some(val(&mut i)),
+            "--regex" => c.regex = true,
+            "--scope" => c.scope_all = val(&mut i) == "all",
+            "--page" => c.page = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
+            "--per-page" => c.per_page = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
+            "--label" => c.label = val(&mut i),
+            other => die(&format!("unknown option '{other}'")),
+        }
+        i += 1;
+    }
+    c
+}
+
+/// Load entries either from --session or stdin `{ "entries": [...] }`.
+fn load_entries(cli: &Cli) -> (Vec<serde_json::Value>, Option<u64>) {
+    if let Some(path) = &cli.session {
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|e| die(&format!("cannot load session: {e}")));
+        let entries = raw
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+            .filter(|v| {
+                matches!(v.get("type").and_then(|t| t.as_str()), Some("message") | Some("compaction"))
+            })
+            .collect();
+        return (entries, None);
+    }
+    let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_else(|e| die(&format!("bad stdin JSON: {e}")));
+    match v.get("entries") {
+        Some(entries) => {
+            let tb = v.get("tokensBefore").and_then(|t| t.as_u64());
+            (entries.as_array().cloned().unwrap_or_default(), tb)
+        }
+        None => {
+            // Bare message array also accepted.
+            if v.is_array() {
+                (v.as_array().cloned().unwrap(), None)
+            } else {
+                die("stdin JSON must be { \"entries\": [...] } or a message array")
+            }
+        }
+    }
+}
+
+fn previous_summary(cli: &Cli) -> Option<String> {
+    if let Some(path) = &cli.session {
+        let raw = std::fs::read_to_string(path).ok()?;
+        let last = raw
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok()).rfind(|v| v.get("type").and_then(|t| t.as_str()) == Some("compaction"))?;
+        return last.get("summary").and_then(|s| s.as_str()).map(String::from);
+    }
+    None
+}
+
+fn main_plan(args: &[String], dry: bool) {
+    let cli = parse_cli(args);
+    let (entries, tokens_before) = load_entries(&cli);
+    let input = CompactInput {
+        entries,
+        tokens_before,
+        previous_summary: previous_summary(&cli),
+        policy: cli.policy,
+        keep_user_turns: cli.keep,
+        smart_keep_tail: cli.smart,
+        vision: cli.vision,
+        model_vision: None,
+        uc_bin: Some(cli.uc_bin.clone()),
+        uc_enabled: cli.uc_enabled,
+        thresholds: Some(rc_core::classify::Thresholds { uc_min_chars: cli.uc_min, snap_min_chars: cli.snap_min }),
+        snap: Some(SnapConfig { cols: cli.cols, rows: cli.rows, ..Default::default() }),
+        transcript: None,
+        image_tokens_per_frame: cli.image_tokens,
+        dry_run: dry,
+    };
+    let result = run(&input).unwrap_or_else(|e| die(&e));
+    let mut out = serde_json::to_value(&result).unwrap_or_else(|e| die(&e.to_string()));
+    if dry {
+        if let Some(obj) = out.as_object_mut() {
+            obj.remove("summary");
+        }
+    }
+    println!("{}", serde_json::to_string(&out).unwrap_or_else(|e| die(&e.to_string())));
+}
+
+fn main_transform(args: &[String]) {
+    let cli = parse_cli(args);
+    let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_else(|e| die(&format!("bad stdin JSON: {e}")));
+    let messages = match &v {
+        Value::Array(_) => v.clone(),
+        obj => obj
+            .get("messages")
+            .cloned()
+            .unwrap_or_else(|| die("stdin must be a message array or { \"messages\": [...] }")),
+    };
+    let input = rc_core::transform::TransformInput {
+        messages: messages.as_array().cloned().unwrap_or_default(),
+        policy: cli.policy,
+        vision: cli.vision,
+        model_vision: v.get("modelVision").and_then(|m| m.as_bool()),
+        uc_bin: Some(cli.uc_bin.clone()),
+        uc_enabled: cli.uc_enabled,
+        thresholds: Some(rc_core::classify::Thresholds { uc_min_chars: cli.uc_min, snap_min_chars: cli.snap_min }),
+        snap: Some(SnapConfig::default()),
+        image_tokens_per_frame: cli.image_tokens,
+        chars_per_token: v.get("charsPerToken").and_then(|c| c.as_f64()),
+    };
+    let result = rc_core::transform::run(&input).unwrap_or_else(|e| die(&e));
+    println!("{}", serde_json::to_string(&result).unwrap_or_else(|e| die(&e.to_string())));
+}
+
+fn main_recall(args: &[String]) {
+    let cli = parse_cli(args);
+    let path = cli.session.clone().unwrap_or_else(|| die("recall requires --session FILE"));
+    let query = cli.query.clone().unwrap_or_else(|| die("recall requires --query"));
+    let opts = RecallOptions { query, regex: cli.regex, scope_all: cli.scope_all, page: cli.page, per_page: cli.per_page };
+    let result = search(&path, &opts).unwrap_or_else(|e| die(&e));
+    println!("{}", serde_json::to_string(&result).unwrap_or_else(|e| die(&e.to_string())));
+}
+
+fn main_uc(args: &[String]) {
+    let mode = args.first().map(|s| s.as_str()).unwrap_or("decode");
+    let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
+    // Accept either { "packet": "..." } JSON or raw packet text on stdin.
+    let payload: String = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(v) if v.get("packet").and_then(|p| p.as_str()).is_some() => {
+            v.get("packet").unwrap().as_str().unwrap().to_string()
+        }
+        _ => String::from_utf8_lossy(&bytes).to_string(),
+    };
+    let sub = match mode {
+        "encode" | "decode" => mode,
+        other => die(&format!("unknown uc mode '{other}' (encode|decode)")),
+    };
+    use std::io::Write;
+    let mut child = std::process::Command::new("uc")
+        .arg(sub)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| die(&format!("cannot spawn uc: {e}")));
+    child.stdin.as_mut().unwrap().write_all(payload.as_bytes()).unwrap_or_else(|e| die(&e.to_string()));
+    let out = child.wait_with_output().unwrap_or_else(|e| die(&e.to_string()));
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        println!("{}", json!({ "error": err.trim() }));
+        return;
+    }
+    println!("{}", json!({ "decoded": String::from_utf8_lossy(&out.stdout) }));
+}
+
+fn main_stats(args: &[String]) {
+    let cli = parse_cli(args);
+    let path = cli.session.clone().unwrap_or_else(|| die("stats requires --session FILE"));
+    let s = load_session(&path, true).unwrap_or_else(|e| die(&format!("cannot load session: {e}")));
+    let mut by_role: std::collections::HashMap<String, (usize, u64)> = std::collections::HashMap::new();
+    let mut json_blocks = 0usize;
+    for m in &s.messages {
+        let e = by_role.entry(m.role.to_string()).or_default();
+        e.0 += 1;
+        e.1 += m.total_chars() as u64;
+        for b in &m.content {
+            if let rc_core::model::Block::ToolResult { text, .. } = b {
+                if rc_core::classify::classify_content(text) == rc_core::classify::ContentClass::Json {
+                    json_blocks += 1;
+                }
+            }
+        }
+    }
+    let total_chars: u64 = by_role.values().map(|(_, c)| c).sum();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "session": s.session_id,
+            "cwd": s.cwd,
+            "entries": s.entry_count,
+            "messages": s.messages.len(),
+            "totalChars": total_chars,
+            "estTokens": total_chars as f64 / 3.8,
+            "jsonToolResults": json_blocks,
+            "byRole": by_role.iter().map(|(k, (n, c))| json!({"role": k, "messages": n, "chars": c})).collect::<Vec<_>>(),
+        }))
+        .unwrap_or_else(|e| die(&e.to_string()))
+    );
+}
+
+fn main_frames(args: &[String]) {
+    let cli = parse_cli(args);
+    let mut text = String::new();
+    let has_session = cli.session.is_some();
+    if !has_session {
+        use std::io::Read;
+        std::io::stdin().read_to_string(&mut text).unwrap_or_else(|e| die(&e.to_string()));
+    } else {
+        die("frames reads text on stdin");
+    }
+    let cfg = SnapConfig { cols: cli.cols, rows: cli.rows, ..Default::default() };
+    let r = render_frames(&text, &cli.label, &cfg);
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "frames": r.frames,
+            "head": r.head,
+            "tail": r.tail,
+            "sourceChars": r.source_chars,
+            "archivedChars": r.archived_chars,
+        }))
+        .unwrap_or_else(|e| die(&e.to_string()))
+    );
+}
