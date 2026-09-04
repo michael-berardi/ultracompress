@@ -1,7 +1,6 @@
 //! Block classification: what kind of content is this, and which engine
 //! should own it?
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContentClass {
@@ -45,7 +44,10 @@ pub struct Thresholds {
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Thresholds { uc_min_chars: 1_200, snap_min_chars: 6_000 }
+        Thresholds {
+            uc_min_chars: 1_200,
+            snap_min_chars: 6_000,
+        }
     }
 }
 

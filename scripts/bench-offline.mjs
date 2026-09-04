@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Offline benchmark: Rapid Compact vs stock Pi compaction vs VCC-only,
+ * Offline benchmark: UltraCompress vs stock Pi compaction vs VCC-only,
  * over real recorded Pi sessions. Deterministic, no API calls.
  *
  * Metric: the context size the NEXT LLM call would see after compaction
@@ -10,10 +10,10 @@
  * Modes compared:
  *   stock-pi   LLM summary (~1.2k tok est) + 20k-token verbatim tail,
  *              history destroyed (no recall)
- *   vcc-only   rc compact --policy vcc   (deterministic brief, no UC/snap)
- *   rc-auto    rc compact (auto) + live transforms on the kept tail
+ *   vcc-only   ultracompress compact --policy vcc   (deterministic brief, no UC/snap)
+ *   ultracompress-auto    ultracompress compact (auto) + live transforms on the kept tail
  *
- * Usage: node scripts/bench-offline.mjs [--rc path/to/rc] [--out docs/bench.json]
+ * Usage: node scripts/bench-offline.mjs [--bin path/to/rc] [--out docs/bench.json]
  */
 
 import { execFileSync } from "node:child_process";
@@ -29,15 +29,15 @@ const argOf = (name, dflt) => {
   const i = args.indexOf(name);
   return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
 };
-const RC = argOf("--rc", path.join(repo, "target", "release", "rc"));
+const ULTRACOMPRESS = argOf("--bin", path.join(repo, "target", "release", "ultracompress"));
 const OUT = argOf("--out", null);
 const MIN_MESSAGES = 30; // only sessions big enough to ever compact
 const MIN_RAW_TOKENS = parseInt(argOf("--min-raw", "40000"), 10); // compaction comparisons are meaningless below this
 const STOCK_SUMMARY_TOKENS = 1200; // Pi's structured LLM summary, ~1.2k tokens
 const STOCK_KEEP_RECENT = 20_000; // Pi default keepRecentTokens
 
-const rc = (args_, stdin) =>
-  JSON.parse(execFileSync(RC, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }));
+const ultracompress = (args_, stdin) =>
+  JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }));
 
 function* sessionFiles() {
   const root = path.join(os.homedir(), ".pi", "agent", "sessions");
@@ -109,13 +109,13 @@ for (const file of sessionFiles()) {
     const stockAfter = STOCK_SUMMARY_TOKENS + stockTail;
 
     // vcc-only
-    const vcc = rc(["compact", "--policy", "vcc", "--vision", "off", "--keep-default"], {
+    const vcc = ultracompress(["compact", "--policy", "vcc", "--vision", "off", "--keep-default"], {
       entries,
     });
     const vccAfter = vcc.stats.tokens_after_est;
 
-    // rc-auto: compaction + live transforms on the kept tail
-    const auto = rc(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], {
+    // ultracompress-auto: compaction + live transforms on the kept tail
+    const auto = ultracompress(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], {
       entries,
     });
     let tailAfter = auto.stats.tokens_after_est - 0; // includes kept tail untransformed
@@ -129,7 +129,7 @@ for (const file of sessionFiles()) {
       const tailEntries = idx >= 0 ? entries.slice(idx) : [];
       if (tailEntries.length > 0) {
         try {
-          const tr = rc(["transform", "--policy", "auto", "--vision", "on"], {
+          const tr = ultracompress(["transform", "--policy", "auto", "--vision", "on"], {
             messages: tailEntries,
             charsPerToken: cpt,
             modelVision: true,
@@ -168,10 +168,10 @@ console.log(
     "raw tok".padStart(10),
     "stock-pi".padStart(10),
     "vcc-only".padStart(10),
-    "rc-auto".padStart(10),
+    "ultracompress-auto".padStart(10),
     "stock ↓".padStart(8),
     "vcc ↓".padStart(8),
-    "rc-auto ↓".padStart(9),
+    "ultracompress-auto ↓".padStart(9),
   ].join(" "),
 );
 for (const r of results) {
@@ -194,11 +194,11 @@ console.log(
   pct(avg(results.map((r) => r.stockSavings))),
   "· vcc-only ↓",
   pct(avg(results.map((r) => r.vccSavings))),
-  "· rc-auto ↓",
+  "· ultracompress-auto ↓",
   pct(avg(results.map((r) => r.autoSavings))),
 );
 console.log(
-  "RECALL   stock-pi: none (history destroyed) · vcc-only: lossless · rc-auto: lossless\n",
+  "RECALL   stock-pi: none (history destroyed) · vcc-only: lossless · ultracompress-auto: lossless\n",
 );
 
 if (OUT) {

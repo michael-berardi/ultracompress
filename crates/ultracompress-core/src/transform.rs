@@ -111,7 +111,11 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
         }
     };
     let vision = input.vision.resolves(input.model_vision);
-    let mix = engine_mix(input.policy, uc_status.available && input.uc_enabled, vision);
+    let mix = engine_mix(
+        input.policy,
+        uc_status.available && input.uc_enabled,
+        vision,
+    );
     let th = input.thresholds.unwrap_or_default();
     let snap_cfg = input.snap.clone().unwrap_or_default();
 
@@ -131,17 +135,25 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                 continue;
             }
             blocks_scanned += 1;
-            let engine = resolve_block(text, &mix, &th, &snap_cfg, input.image_tokens_per_frame, cpt);
+            let engine = resolve_block(
+                text,
+                &mix,
+                &th,
+                &snap_cfg,
+                input.image_tokens_per_frame,
+                cpt,
+            );
             match engine {
                 crate::classify::Engine::Uc => {
                     if let Some(packet) = uc.encode_json(text) {
                         let before = crate::estimate::tokens_from_chars(text.len(), cpt);
                         let stub = format!(
-                            "[UC packet: JSON payload, {} → {} tokens, -{:.0}%; decode via rc_uc decode]",
+                            "[UC packet: JSON payload, {} → {} tokens, -{:.0}%; decode via ultracompress_uc decode]",
                             packet.source_chars, packet.tokens_uc, packet.savings_pct
                         );
                         tokens_before += before;
-                        tokens_after += crate::estimate::tokens_from_chars(stub.len(), cpt) + packet.tokens_uc;
+                        tokens_after +=
+                            crate::estimate::tokens_from_chars(stub.len(), cpt) + packet.tokens_uc;
                         ops.push(TransformOp::Uc {
                             message_index: mi,
                             block_index: bi,
@@ -157,8 +169,9 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                     if !plan.worthwhile {
                         continue;
                     }
-                    let SnapResult { frames, head, tail, .. } =
-                        render_frames(text, "tool output", &snap_cfg);
+                    let SnapResult {
+                        frames, head, tail, ..
+                    } = render_frames(text, "tool output", &snap_cfg);
                     let per_frame = crate::estimate::frame_tokens(
                         (plan.cols as u32) * 8 + 8,
                         (plan.rows as u32) * 8 + 8,
@@ -197,8 +210,14 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
     } else {
         0.0
     };
-    let uc_ops = ops.iter().filter(|o| matches!(o, TransformOp::Uc { .. })).count();
-    let snap_ops = ops.iter().filter(|o| matches!(o, TransformOp::Snap { .. })).count();
+    let uc_ops = ops
+        .iter()
+        .filter(|o| matches!(o, TransformOp::Uc { .. }))
+        .count();
+    let snap_ops = ops
+        .iter()
+        .filter(|o| matches!(o, TransformOp::Snap { .. }))
+        .count();
 
     Ok(TransformResult {
         ops,
@@ -221,7 +240,10 @@ mod tests {
     use serde_json::json;
 
     fn big_text() -> String {
-        (0..400).map(|i| format!("build line {i}: compiling crate number {i} with warnings")).collect::<Vec<_>>().join("\n")
+        (0..400)
+            .map(|i| format!("build line {i}: compiling crate number {i} with warnings"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -244,7 +266,11 @@ mod tests {
         };
         let r = run(&input).unwrap();
         assert_eq!(r.stats.snap_ops, 1);
-        assert!(r.stats.savings_pct > 25.0, "savings: {}", r.stats.savings_pct);
+        assert!(
+            r.stats.savings_pct > 25.0,
+            "savings: {}",
+            r.stats.savings_pct
+        );
         match &r.ops[0] {
             TransformOp::Snap { frames, head, .. } => {
                 assert!(!frames.is_empty());

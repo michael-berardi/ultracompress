@@ -1,6 +1,6 @@
 //! Compaction orchestrator: cut resolution, engine routing, summary build.
 //!
-//! This is the Rust heart of Rapid Compact. The extension feeds it the live
+//! This is the Rust heart of UltraCompress. The extension feeds it the live
 //! branch entries (raw Pi session-entry shapes), calibration data, and the
 //! previous summary; it returns a ready-to-save compaction result.
 
@@ -8,12 +8,12 @@ use crate::classify::Thresholds;
 use crate::estimate::{calibrate, tokens_from_chars};
 use crate::format::{merge, render, PreviousSummary};
 use crate::model::{parse_message, Block, RcMessage};
-use crate::ucbridge::UcPacket;
 use crate::policy::{engine_mix, Policy, VisionMode};
 use crate::sections::{extract, Sections};
 use crate::snap::SnapConfig;
 use crate::transcript::{build as build_transcript, TranscriptConfig};
 use crate::ucbridge::UcBridge;
+use crate::ucbridge::UcPacket;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,8 +121,16 @@ pub fn collect_live(entries: &[serde_json::Value]) -> (Vec<RcMessage>, Vec<Strin
         .filter_map(|(i, v)| {
             let obj = v.as_object()?;
             let ty = obj.get("type").and_then(|t| t.as_str())?;
-            let id = obj.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let m = if ty == "message" { parse_message(v, &format!("m{i}")) } else { None };
+            let id = obj
+                .get("id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let m = if ty == "message" {
+                parse_message(v, &format!("m{i}"))
+            } else {
+                None
+            };
             Some((id, ty.to_string(), m))
         })
         .collect();
@@ -135,7 +143,8 @@ pub fn collect_live(entries: &[serde_json::Value]) -> (Vec<RcMessage>, Vec<Strin
         .to_string();
 
     let has_prior = last_compaction_idx.is_some();
-    let has_valid_kept = !last_kept_id.is_empty() && parsed.iter().any(|(id, _, _)| *id == last_kept_id);
+    let has_valid_kept =
+        !last_kept_id.is_empty() && parsed.iter().any(|(id, _, _)| *id == last_kept_id);
     let orphan = has_prior && !has_valid_kept;
 
     let mut live: Vec<RcMessage> = Vec::new();
@@ -181,7 +190,11 @@ pub fn resolve_cut(live: &[RcMessage], keep_user_turns: usize, cpt: f64) -> Opti
         .collect();
 
     if keep_user_turns == 0 {
-        return Some(Cut { summarize_end: live.len(), first_kept_index: usize::MAX, compact_all: true });
+        return Some(Cut {
+            summarize_end: live.len(),
+            first_kept_index: usize::MAX,
+            compact_all: true,
+        });
     }
     if user_indices.len() < 2 {
         // Split-turn: cut inside the single turn on a token budget.
@@ -192,17 +205,33 @@ pub fn resolve_cut(live: &[RcMessage], keep_user_turns: usize, cpt: f64) -> Opti
         if idx == 0 {
             return None;
         }
-        return Some(Cut { summarize_end: idx, first_kept_index: idx, compact_all: false });
+        return Some(Cut {
+            summarize_end: idx,
+            first_kept_index: idx,
+            compact_all: false,
+        });
     }
     let target_count = user_indices.len().checked_sub(keep_user_turns)?;
     if target_count == 0 {
-        return Some(Cut { summarize_end: live.len(), first_kept_index: usize::MAX, compact_all: true });
+        return Some(Cut {
+            summarize_end: live.len(),
+            first_kept_index: usize::MAX,
+            compact_all: true,
+        });
     }
     let cut_idx = user_indices[target_count];
     if cut_idx == 0 {
-        return Some(Cut { summarize_end: live.len(), first_kept_index: usize::MAX, compact_all: true });
+        return Some(Cut {
+            summarize_end: live.len(),
+            first_kept_index: usize::MAX,
+            compact_all: true,
+        });
     }
-    Some(Cut { summarize_end: cut_idx, first_kept_index: cut_idx, compact_all: false })
+    Some(Cut {
+        summarize_end: cut_idx,
+        first_kept_index: cut_idx,
+        compact_all: false,
+    })
 }
 
 /// Smart keep: boost keep:N when the tail is tiny so we retain more verbatim
@@ -224,7 +253,12 @@ pub fn resolve_smart_keep(
         if cut.compact_all {
             return None;
         }
-        Some(live[cut.first_kept_index..].iter().map(|m| m.total_chars()).sum())
+        Some(
+            live[cut.first_kept_index..]
+                .iter()
+                .map(|m| m.total_chars())
+                .sum(),
+        )
     };
     let base_chars = match tail_chars(base) {
         Some(c) => c,
@@ -233,7 +267,10 @@ pub fn resolve_smart_keep(
     if tokens_from_chars(base_chars, cpt) > min_tokens {
         return (base, false);
     }
-    let total_user = live.iter().filter(|m| m.role == crate::model::Role::User).count();
+    let total_user = live
+        .iter()
+        .filter(|m| m.role == crate::model::Role::User)
+        .count();
     let mut selected = base;
     for k in (base + 1)..=total_user.max(base) {
         match tail_chars(k) {
@@ -285,7 +322,11 @@ pub fn apply_tail_budget(
         // compact-all (no anchor) gets a budget rescue.
         if let Some(idx) = find_budget_cut_index(live, max_tokens, cpt) {
             return (
-                Cut { summarize_end: idx, first_kept_index: idx, compact_all: false },
+                Cut {
+                    summarize_end: idx,
+                    first_kept_index: idx,
+                    compact_all: false,
+                },
                 Some("no_anchor"),
             );
         }
@@ -306,7 +347,11 @@ pub fn apply_tail_budget(
         return (cut, None);
     }
     (
-        Cut { summarize_end: idx, first_kept_index: idx, compact_all: false },
+        Cut {
+            summarize_end: idx,
+            first_kept_index: idx,
+            compact_all: false,
+        },
         Some("oversized_tail"),
     )
 }
@@ -321,7 +366,11 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     // Calibration over everything (summarized span will be close enough;
     // tokens_before refers to the whole context including the tail).
     let total_chars: usize = live.iter().map(|m| m.total_chars()).sum();
-    let prev_chars = input.previous_summary.as_deref().map(|s| s.len()).unwrap_or(0);
+    let prev_chars = input
+        .previous_summary
+        .as_deref()
+        .map(|s| s.len())
+        .unwrap_or(0);
     let est = calibrate(total_chars + prev_chars, input.tokens_before);
     let cpt = est.chars_per_token;
 
@@ -360,7 +409,11 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         }
     };
     let vision = input.vision.resolves(input.model_vision);
-    let mix = engine_mix(input.policy, uc_status.available && input.uc_enabled, vision);
+    let mix = engine_mix(
+        input.policy,
+        uc_status.available && input.uc_enabled,
+        vision,
+    );
     let th = input.thresholds.unwrap_or_default();
 
     let tr_cfg = input.transcript.clone().unwrap_or_default();
@@ -374,12 +427,16 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
 
     for (i, m) in summarized.iter().enumerate() {
         for b in &m.content {
-            if let Block::ToolResult { tool_name, text, .. } = b {
+            if let Block::ToolResult {
+                tool_name, text, ..
+            } = b
+            {
                 if text.len() < th.uc_min_chars {
                     continue;
                 }
                 let engine = if mix.uc
-                    && crate::classify::classify_content(text) == crate::classify::ContentClass::Json
+                    && crate::classify::classify_content(text)
+                        == crate::classify::ContentClass::Json
                 {
                     crate::classify::Engine::Uc
                 } else {
@@ -387,7 +444,11 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
                 };
                 let mut decision = BlockDecision {
                     message_index: i,
-                    tool: if tool_name.is_empty() { "tool".into() } else { tool_name.clone() },
+                    tool: if tool_name.is_empty() {
+                        "tool".into()
+                    } else {
+                        tool_name.clone()
+                    },
                     chars: text.len(),
                     engine,
                     uc_savings_pct: None,
@@ -416,7 +477,7 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         let (_, last) = uc_inline.last().unwrap().clone();
         if last.tokens_uc <= INLINE_UC_MAX_TOKENS {
             critical.push(format!(
-                "[UC packet — most recent JSON payload ({} → {} tokens, -{:.0}%); decode via rc_uc decode]",
+                "[UC packet — most recent JSON payload ({} → {} tokens, -{:.0}%); decode via ultracompress_uc decode]",
                 human_chars(last.source_chars),
                 last.tokens_uc,
                 last.savings_pct
@@ -428,7 +489,7 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         }
         for (_, p) in &uc_inline {
             uc_notes.push(format!(
-                "[rc-archive uc: JSON payload, {}→{} tokens (-{:.0}%), decode via rc_uc]",
+                "[ultracompress-archive uc: JSON payload, {}→{} tokens (-{:.0}%), decode via ultracompress_uc]",
                 p.tokens_json, p.tokens_uc, p.savings_pct
             ));
             uc_blocks += 1;
@@ -438,7 +499,10 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
 
     // Sections + transcript + merge + render.
     let mut new_sections = extract(summarized);
-    let prev = input.previous_summary.as_deref().and_then(PreviousSummary::parse);
+    let prev = input
+        .previous_summary
+        .as_deref()
+        .and_then(PreviousSummary::parse);
     let merged: Sections = merge(prev.as_ref(), &new_sections);
     let mut archived: Vec<String> = Vec::new();
     if let Some(p) = &prev {
@@ -452,7 +516,7 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
 
     // Token accounting. Snap frames are a live-path concern; compaction
     // savings come from the summary alone. The kept tail's savings via live
-    // transforms are reported separately by `rc transform`.
+    // transforms are reported separately by `ultracompress transform`.
     let summarized_tokens = tokens_from_chars(total_chars_of(summarized), cpt);
     let summary_tokens = tokens_from_chars(summary.len(), cpt);
     let kept_tokens = if cut.compact_all {
@@ -470,7 +534,7 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
 
     let (uc_encodes, uc_hits) = uc.cache_stats();
     let details = serde_json::json!({
-        "compactor": "rapid-compact",
+        "compactor": "ultracompress",
         "version": env!("CARGO_PKG_VERSION"),
         "policy": input.policy,
         "engines": { "uc": mix.uc && uc_status.available, "snap": mix.snap },
@@ -574,7 +638,13 @@ mod tests {
         })
     }
 
-    fn tool_entry(id: &str, parent: &str, tool: &str, call_id: &str, text: &str) -> serde_json::Value {
+    fn tool_entry(
+        id: &str,
+        parent: &str,
+        tool: &str,
+        call_id: &str,
+        text: &str,
+    ) -> serde_json::Value {
         json!({
             "type": "message",
             "id": id,
@@ -600,17 +670,30 @@ mod tests {
     }
 
     fn big_text() -> String {
-        (0..400).map(|i| format!("build line {i}: compiling crate number {i} with warnings galore")).collect::<Vec<_>>().join("\n")
+        (0..400)
+            .map(|i| format!("build line {i}: compiling crate number {i} with warnings galore"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn sample_entries() -> Vec<serde_json::Value> {
         vec![
-            entry("e1", null_parent(), "user", "Fix the build and run all tests. Always run clippy after fixes."),
+            entry(
+                "e1",
+                null_parent(),
+                "user",
+                "Fix the build and run all tests. Always run clippy after fixes.",
+            ),
             assistant_call("e2", "e1", "c1"),
             tool_entry("e3", "e2", "bash", "c1", &big_json()),
             assistant_call("e4", "e3", "c2"),
             tool_entry("e5", "e4", "bash", "c2", &big_text()),
-            entry("e6", "e5", "assistant", "Fixed two failing modules; rerunning."),
+            entry(
+                "e6",
+                "e5",
+                "assistant",
+                "Fixed two failing modules; rerunning.",
+            ),
             entry("e7", "e6", "user", "now check coverage"),
             entry("e8", "e7", "assistant", "Coverage is at 84%."),
         ]
@@ -634,7 +717,13 @@ mod tests {
             uc_bin: Some("rc-definitely-not-a-binary".into()),
             uc_enabled: true,
             thresholds: None,
-            snap: Some(SnapConfig { cols: 100, rows: 30, head_chars: 200, tail_chars: 100, scale: 1 }),
+            snap: Some(SnapConfig {
+                cols: 100,
+                rows: 30,
+                head_chars: 200,
+                tail_chars: 100,
+                scale: 1,
+            }),
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: false,
@@ -692,7 +781,9 @@ mod tests {
             .map(|i| RcMessage {
                 id: format!("u{i}"),
                 role: crate::model::Role::User,
-                content: vec![Block::Text { text: "tiny".into() }],
+                content: vec![Block::Text {
+                    text: "tiny".into(),
+                }],
                 timestamp: None,
             })
             .collect();
@@ -749,7 +840,10 @@ mod tests {
             dry_run: true,
         };
         let r = run(&input).unwrap();
-        assert!(r.summary.contains("src/old.ts"), "previous files should persist across merge");
+        assert!(
+            r.summary.contains("src/old.ts"),
+            "previous files should persist across merge"
+        );
         assert!(r.details["previousSummaryUsed"].as_bool().unwrap());
     }
 
@@ -757,16 +851,20 @@ mod tests {
     fn single_user_turn_splits_at_budget() {
         // One user prompt, then a long agentic loop (the bench shape): pi
         // calls this a split turn — we must cut inside it, not refuse.
-        let mut entries = vec![
-            entry("b0", null_parent(), "user", "do the whole task now"),
-        ];
+        let mut entries = vec![entry("b0", null_parent(), "user", "do the whole task now")];
         let mut parent = "b0".to_string();
         for i in 0..40 {
             let id = format!("b{}", i + 1);
             if i % 2 == 0 {
                 entries.push(assistant_call(&id, &parent, &format!("c{i}")));
             } else {
-                entries.push(tool_entry(&id, &parent, "bash", &format!("c{}", i - 1), &big_text()));
+                entries.push(tool_entry(
+                    &id,
+                    &parent,
+                    "bash",
+                    &format!("c{}", i - 1),
+                    &big_text(),
+                ));
             }
             parent = id;
         }
@@ -788,7 +886,10 @@ mod tests {
             dry_run: true,
         };
         let r = run(&input).unwrap();
-        assert!(r.stats.summarized_messages > 0, "split turn must summarize a prefix");
+        assert!(
+            r.stats.summarized_messages > 0,
+            "split turn must summarize a prefix"
+        );
         assert!(r.stats.kept_messages > 0, "split turn must keep a tail");
         assert_ne!(r.first_kept_entry_id, "");
     }

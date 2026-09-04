@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
 
-export interface RcResult<T> {
+export interface UltraCompressResult<T> {
   ok: boolean;
   data?: T;
   error?: string;
 }
 
-/** Spawn the rc binary with JSON on stdin; parse JSON from stdout. */
-export function runRc<T>(bin: string, args: string[], stdinJson: unknown, timeoutMs = 10_000): Promise<RcResult<T>> {
+/** Spawn the UltraCompress binary with JSON on stdin; parse JSON from stdout. */
+export function runUltraCompress<T>(bin: string, args: string[], stdinJson: unknown, timeoutMs = 10_000): Promise<UltraCompressResult<T>> {
   return new Promise((resolve) => {
     let child;
     try {
@@ -19,7 +19,7 @@ export function runRc<T>(bin: string, args: string[], stdinJson: unknown, timeou
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const finish = (r: RcResult<T>) => {
+    const finish = (r: UltraCompressResult<T>) => {
       if (!settled) {
         settled = true;
         resolve(r);
@@ -27,7 +27,7 @@ export function runRc<T>(bin: string, args: string[], stdinJson: unknown, timeou
     };
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      finish({ ok: false, error: `rc timed out after ${timeoutMs}ms` });
+      finish({ ok: false, error: `UltraCompress timed out after ${timeoutMs}ms` });
     }, timeoutMs);
 
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -39,13 +39,13 @@ export function runRc<T>(bin: string, args: string[], stdinJson: unknown, timeou
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        finish({ ok: false, error: `rc exited ${code}: ${stderr.trim().slice(0, 300)}` });
+        finish({ ok: false, error: `UltraCompress exited ${code}: ${stderr.trim().slice(0, 300)}` });
         return;
       }
       try {
         finish({ ok: true, data: JSON.parse(stdout) as T });
       } catch (err) {
-        finish({ ok: false, error: `bad rc output: ${String(err)}` });
+        finish({ ok: false, error: `bad UltraCompress output: ${String(err)}` });
       }
     });
 

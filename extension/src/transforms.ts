@@ -35,10 +35,10 @@ export interface SnapOp {
   tokens_after: number;
 }
 
-export type RcOp = UcOp | SnapOp;
+export type UltraCompressOp = UcOp | SnapOp;
 
 export interface TransformResponse {
-  ops: RcOp[];
+  ops: UltraCompressOp[];
   stats: {
     blocks_scanned: number;
     uc_ops: number;
@@ -111,7 +111,7 @@ export function ucReplacement(op: UcOp): Array<Record<string, unknown>> {
 export function snapTextReplacement(op: SnapOp): Array<Record<string, unknown>> {
   const marker =
     op.frames.length > 0
-      ? `\n[rapid-compact: ${op.frames.length} image frame(s) hold the archived middle — ${
+      ? `\n[ultracompress: ${op.frames.length} image frame(s) hold the archived middle — ${
           op.frames.map((f) => f.id).join(", ")
         }]`
       : "";
@@ -129,7 +129,7 @@ export function snapFrameBlocks(op: SnapOp): Array<Record<string, unknown>> {
   if (op.frames.length === 0) return blocks;
   blocks.push({
     type: "text",
-    text: `[rapid-compact: archived tool output follows as image frame(s) — verbatim, read in order]`,
+    text: `[ultracompress: archived tool output follows as image frame(s) — verbatim, read in order]`,
   });
   for (const f of op.frames) {
     blocks.push({ type: "image", data: f.pngBase64, mimeType: "image/png" });
@@ -150,7 +150,7 @@ export interface ApplyResult {
  */
 export function applyTransforms(
   messages: AgentLikeMessage[],
-  replacements: Map<string, { op: RcOp; blocks: Array<Record<string, unknown>> }>,
+  replacements: Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>,
   keys: (m: AgentLikeMessage, bi: number) => string | undefined,
   placement: "nextUser" | "inline",
 ): ApplyResult {

@@ -1,6 +1,6 @@
 //! Bridge to the UltraCompact (`uc`) engine.
 //!
-//! UC is an optional external binary (default `uc` on PATH). Rapid Compact is
+//! UC is an optional external binary (default `uc` on PATH). UltraCompress is
 //! fully functional without it; when present it shrinks JSON payloads
 //! losslessly, and UC itself guarantees output tokens ≤ minified JSON for
 //! every payload. The bridge shells out to `uc encode --stats`, parses the
@@ -42,11 +42,17 @@ pub struct UcBridge {
 
 impl UcBridge {
     pub fn new(bin: &str) -> Self {
-        UcBridge { bin: bin.to_string(), available: None, cache: HashMap::new(), encodes: 0, hits: 0 }
+        UcBridge {
+            bin: bin.to_string(),
+            available: None,
+            cache: HashMap::new(),
+            encodes: 0,
+            hits: 0,
+        }
     }
 
     /// Probe the binary once. Never panics; a missing UC just disables the
-    /// engine for this run (graceful degradation — Rapid Compact stays open
+    /// engine for this run (graceful degradation — UltraCompress stays open
     /// source and standalone, UC is an accelerator).
     pub fn probe(&mut self) -> UcStatus {
         if let Some(avail) = self.available {
@@ -55,7 +61,11 @@ impl UcBridge {
                 bin: self.bin.clone(),
                 available: avail,
                 version: None,
-                reason: if avail { None } else { Some("uc binary not found or not working".into()) },
+                reason: if avail {
+                    None
+                } else {
+                    Some("uc binary not found or not working".into())
+                },
             };
         }
         let ok = Command::new(&self.bin)
@@ -68,7 +78,13 @@ impl UcBridge {
             .unwrap_or(false);
         let version = if ok { self.version_string() } else { None };
         self.available = Some(ok);
-        UcStatus { enabled: true, bin: self.bin.clone(), available: ok, version, reason: None }
+        UcStatus {
+            enabled: true,
+            bin: self.bin.clone(),
+            available: ok,
+            version,
+            reason: None,
+        }
     }
 
     fn version_string(&self) -> Option<String> {
@@ -90,7 +106,11 @@ impl UcBridge {
             bin: self.bin.clone(),
             available: avail,
             version: if avail { self.version_string() } else { None },
-            reason: if avail { None } else { Some("uc binary not probed/available".into()) },
+            reason: if avail {
+                None
+            } else {
+                Some("uc binary not probed/available".into())
+            },
         }
     }
 
@@ -149,7 +169,13 @@ impl UcBridge {
         if tokens_uc >= tokens_json {
             return None; // never ship a worse payload
         }
-        Some(UcPacket { packet, tokens_uc, tokens_json, source_chars: text.len(), savings_pct })
+        Some(UcPacket {
+            packet,
+            tokens_uc,
+            tokens_json,
+            source_chars: text.len(),
+            savings_pct,
+        })
     }
 }
 

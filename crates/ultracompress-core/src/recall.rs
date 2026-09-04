@@ -20,7 +20,13 @@ pub struct RecallOptions {
 
 impl Default for RecallOptions {
     fn default() -> Self {
-        RecallOptions { query: String::new(), regex: false, scope_all: false, page: 1, per_page: 5 }
+        RecallOptions {
+            query: String::new(),
+            regex: false,
+            scope_all: false,
+            page: 1,
+            per_page: 5,
+        }
     }
 }
 
@@ -90,7 +96,13 @@ pub fn search(path: &std::path::Path, opts: &RecallOptions) -> Result<RecallResu
         if text.is_empty() {
             continue;
         }
-        texts.push((m.id.clone(), m.role.to_string(), text, m.timestamp, hash_of(m)));
+        texts.push((
+            m.id.clone(),
+            m.role.to_string(),
+            text,
+            m.timestamp,
+            hash_of(m),
+        ));
     }
     let searched = texts.len();
     let mut df: HashMap<String, usize> = HashMap::new();
@@ -154,7 +166,11 @@ pub fn search(path: &std::path::Path, opts: &RecallOptions) -> Result<RecallResu
         }
     }
 
-    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let total = hits.len();
     let page_count = total.div_ceil(opts.per_page).max(1);
     let page = opts.page.max(1).min(page_count);
@@ -176,13 +192,17 @@ fn flatten(m: &crate::model::RcMessage) -> String {
     for b in &m.content {
         match b {
             Block::Text { text } | Block::Thinking { text, .. } => parts.push(text.clone()),
-            Block::ToolResult { tool_name, text, .. } => {
+            Block::ToolResult {
+                tool_name, text, ..
+            } => {
                 if !tool_name.is_empty() {
                     parts.push(format!("[{tool_name}]"));
                 }
                 parts.push(text.clone());
             }
-            Block::ToolCall { name, arguments, .. } => {
+            Block::ToolCall {
+                name, arguments, ..
+            } => {
                 parts.push(format!("[call {name}] {}", arguments));
             }
             _ => {}
@@ -247,12 +267,18 @@ mod tests {
         );
         let r = search(
             &p,
-            &RecallOptions { query: "xyzzy the".into(), ..Default::default() },
+            &RecallOptions {
+                query: "xyzzy the".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert!(r.total >= 2);
         // The hit matching the rare term should outrank the common-term hit.
-        assert!(r.hits[0].snippet.contains("xyzzy") || r.hits[0].matched_terms.contains(&"xyzzy".into()));
+        assert!(
+            r.hits[0].snippet.contains("xyzzy")
+                || r.hits[0].matched_terms.contains(&"xyzzy".into())
+        );
         std::fs::remove_file(&p).ok();
     }
 
@@ -266,7 +292,11 @@ mod tests {
         );
         let r = search(
             &p,
-            &RecallOptions { query: "hook|inject".into(), regex: true, ..Default::default() },
+            &RecallOptions {
+                query: "hook|inject".into(),
+                regex: true,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(r.total, 1);

@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 /**
  * Pre-compaction snapshots — the safety net Instant Snap provided, now built
- * into Rapid Compact. Before every compaction the full session state is
+ * into UltraCompress. Before every compaction the full session state is
  * serialized to .steak-pi/snaps/ so pre-compaction state is always
  * restorable. One local write at snap time; failure never blocks compaction.
  */
@@ -33,7 +33,7 @@ export function buildSnap(
     reason,
     createdAt: nowMs,
     entries: entries.length,
-    compactor: "rapid-compact",
+    compactor: "ultracompress",
   };
   return { meta, payload: JSON.stringify({ snap: meta, entries }, null, 0) };
 }

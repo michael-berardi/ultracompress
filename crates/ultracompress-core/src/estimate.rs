@@ -1,6 +1,6 @@
 //! Token estimation and chars-per-token calibration.
 //!
-//! Rapid Compact is tokenizer-free by default: it estimates with a calibrated
+//! UltraCompress is tokenizer-free by default: it estimates with a calibrated
 //! chars/token ratio. When the extension supplies `tokensBefore` (Pi's real
 //! measured context size), the ratio is calibrated against the actual
 //! tokenizer for this session — the same trick pi-vcc uses, generalized.
@@ -25,11 +25,17 @@ pub fn calibrate(total_chars: usize, tokens_before: Option<u64>) -> TokenEstimat
         if t > 200 && total_chars > 1000 {
             let ratio = total_chars as f64 / t as f64;
             if (2.0..=8.0).contains(&ratio) {
-                return TokenEstimate { chars_per_token: ratio, calibrated: true };
+                return TokenEstimate {
+                    chars_per_token: ratio,
+                    calibrated: true,
+                };
             }
         }
     }
-    TokenEstimate { chars_per_token: DEFAULT_CHARS_PER_TOKEN, calibrated: false }
+    TokenEstimate {
+        chars_per_token: DEFAULT_CHARS_PER_TOKEN,
+        calibrated: false,
+    }
 }
 
 pub fn tokens_from_chars(chars: usize, cpt: f64) -> u64 {

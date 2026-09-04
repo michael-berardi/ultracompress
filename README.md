@@ -1,8 +1,8 @@
 <div align="center">
 
-# ⚡ Rapid Compact
+# ⚡ UltraCompress
 
-**The fastest compaction for [Pi](https://github.com/badlogic/pi-mono). Deterministic. Lossless. $0.**
+**Deterministic local compaction for [Pi](https://github.com/badlogic/pi-mono). Lossless recall. $0 per compaction.**
 
 VCC briefs · snap frames · UC packets — one policy engine.
 
@@ -18,13 +18,13 @@ ever read twice. Then compaction torches the evidence: an LLM summarizes
 your session, the summary hallucinates a little, the raw history is gone,
 and the next compaction summarizes the summary.
 
-**Rapid Compact never calls an LLM to compact.** It compacts the way a
+**UltraCompress never calls an LLM to compact.** It compacts the way a
 compiler would: measure every representation, keep the cheapest one that's
 still faithful, and never throw away the original.
 
 ```
 stock Pi:   160k billed tokens · LLM summary · history destroyed
-rapid-compact:  152k billed tokens · $0 compaction · 94% of facts recoverable
+ultracompress:  152k billed tokens · $0 compaction · 94% of facts recoverable
 ```
 
 ## Three engines, one policy
@@ -43,19 +43,19 @@ warnings) survive every pass.
 
 ## Lossless by construction
 
-Every other compactor's story ends at the summary. Rapid Compact's begins
-there: the raw session stays on disk and `rc_recall` searches it — ranked,
+Every other compactor's story ends at the summary. UltraCompress's begins
+there: the raw session stays on disk and `ultracompress_recall` searches it — ranked,
 paged, ~10 ms — so compacted-away history stays reachable at **94.4%
 hit@5** (72 sampled facts across 9 real sessions; stock Pi: 0%, the history
-is gone). The model gets a `rc_recall` tool and learns to use it before
+is gone). The model gets a `ultracompress_recall` tool and learns to use it before
 claiming it lost context.
 
 ## Built for trust
 
 - **Deterministic** — same session + same config = byte-identical summary
 - **Never-worse** — a transform ships only when measured tokens say it wins
-- **Fallback-first** — any failure degrades to Pi core compaction; Rapid
-  Compact cannot brick a session
+- **Fallback-first** — any failure degrades to Pi core compaction;
+  UltraCompress cannot brick a session
 - **Zero API cost** — compaction is local computation; UC/snap shrink the
   *live* context every turn, before compaction even triggers
 
@@ -63,57 +63,58 @@ claiming it lost context.
 
 Full methodology and every run in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
-| benchmark | stock Pi | pi-vcc | Rapid Compact |
+| benchmark | stock Pi | pi-vcc | UltraCompress |
 |---|---|---|---|
 | Post-compaction context (12 real sessions) | ↓ 79.8% | ↓ 78.8% | ↓ 79.0% (at parity, $0) |
 | Facts recoverable after compaction | 0% | 94.4% | **94.4%** |
 | Compaction API cost | 1 LLM call each | $0 | **$0** |
 | Summary determinism | none | byte-exact | **byte-exact** |
 | JSON payload shrink | — | — | **−26%+ tokens** |
-| Live task cost vs OMP snapcompact | — | — | **1/8 OMP's cost** |
+| Live task observed cost vs OMP | — | — | **$0.0066 vs $0.0516** |
 
 ## Install
 
-Requires the `rc` binary (Rust ≥ 1.85):
+Requires the `ultracompress` binary (Rust ≥ 1.85):
 
 ```bash
-git clone https://github.com/sting8k/rapid-compact
-cd rapid-compact
+git clone https://github.com/michael-berardi/ultracompress
+cd ultracompress
 cargo build --release
-mkdir -p ~/.local/bin && cp target/release/rc ~/.local/bin/
+mkdir -p ~/.local/bin
+cp target/release/ultracompress ~/.local/bin/
 ```
 
 Then use as a Pi extension:
 
 ```bash
-pi -e /path/to/rapid-compact/extension            # try it
-pi install /path/to/rapid-compact/extension       # or install
+pi -e /path/to/ultracompress/extension            # try it
+pi install /path/to/ultracompress/extension       # or install
 ```
 
 Optional — [UltraCompact](https://github.com/michael-berardi/ultracompact)
-(`uc` on PATH) unlocks the UC engine. Rapid Compact is fully functional
+(`uc` on PATH) unlocks the UC engine. UltraCompress is fully functional
 without it; when present, JSON payloads shrink automatically and
 losslessly. UC stays an optional accelerator, on by default, graceful when
 absent.
 
 ## Use
 
-Automatic — Rapid Compact takes over `/compact` and threshold compactions
+Automatic — UltraCompress takes over `/compact` and threshold compactions
 (`overrideDefaultCompaction: false` to send them back to Pi core).
 
 | command | what it does |
 |---|---|
-| `/rc` | compact now · `keep:N` · `policy:auto\|vcc\|snap\|uc` · optional follow-up prompt |
-| `/rc-recall <query>` | search raw history (compacted turns included) · `scope:all` |
-| `/rc-stats` | status, policy, cache, snapshots |
+| `/ultracompress` | compact now · `keep:N` · `policy:auto\|vcc\|snap\|uc` · optional follow-up prompt |
+| `/ultracompress-recall <query>` | search raw history (compacted turns included) · `scope:all` |
+| `/ultracompress-stats` | status, policy, cache, snapshots |
 | `/snaps` | pre-compaction snapshots (restorable) |
 
-Tools the model uses on its own: `rc_recall` (search history),
-`rc_uc` (decode a UC packet).
+Tools the model uses on its own: `ultracompress_recall` (search history),
+`ultracompress_uc` (decode a UC packet).
 
 ## Config
 
-`~/.pi/agent/rapid-compact.json` — scaffolded with safe defaults on first run:
+`~/.pi/agent/ultracompress.json` — scaffolded with safe defaults on first run:
 
 ```json
 {
@@ -121,7 +122,7 @@ Tools the model uses on its own: `rc_recall` (search history),
   "overrideDefaultCompaction": true,
   "smartKeepTail": true,
   "keepUserTurns": null,
-  "rcBin": "",
+  "ultracompressBin": "",
   "uc":  { "enabled": true, "bin": "uc", "minChars": 1200 },
   "snap": { "enabled": true, "minChars": 6000, "placement": "nextUser",
             "providers": ["anthropic", "google"] },
@@ -134,6 +135,11 @@ Snap frames are provider-gated: they ship only where the wire format is
 proven. Everywhere else you get VCC + UC — still deterministic, still $0,
 still lossless.
 
+Renaming from the pre-release project is automatic: an existing
+`~/.pi/agent/rapid-compact.json` is copied to `ultracompress.json`, and an
+installed `rc` binary remains a fallback. New commands, tools, settings, and
+installs use the UltraCompress name.
+
 ## Architecture
 
 ```
@@ -145,7 +151,7 @@ still lossless.
 └────────────────────────────┬───────────────────────────────┘
                              ▼ JSON in / JSON out
 ┌────────────────────────────────────────────────────────────┐
-│ rc (Rust) — the engine                                     │
+│ ultracompress (Rust) — the engine                           │
 │   load → normalize → classify → policy → route             │
 │     ├─ VCC: sections · transcript · merge · render         │
 │     ├─ Snap: adaptive layout → deterministic PNG frames    │
@@ -164,7 +170,7 @@ Reproduce everything yourself:
 ```bash
 node scripts/bench-offline.mjs        # real sessions, zero API cost
 node scripts/bench-recall.mjs         # recall quality after compaction
-bash scripts/live-bench.sh all        # live: stock vs rc vs OMP
+bash scripts/live-bench.sh all        # live: stock vs UltraCompress vs OMP
 node scripts/live-bench-report.mjs
 ```
 
@@ -173,12 +179,14 @@ node scripts/live-bench-report.mjs
 - [VCC](https://github.com/lllyasviel/VCC) — the original
   transcript-preserving conversation compiler
 - [pi-vcc](https://github.com/sting8k/pi-vcc) — the Pi extension that
-  proved deterministic compaction; Rapid Compact's VCC engine descends from it
+  proved deterministic compaction; UltraCompress's VCC engine descends from it
 - OMP Snap Compact — the image-frame compaction idea, reworked with
   content-adaptive shapes and honest economics
 - [UltraCompact](https://github.com/michael-berardi/ultracompact) — the
   lossless JSON token-minimizer behind the UC engine
 
-## License
+## Contributing, security, and license
 
-MIT
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report
+security issues privately as described in [SECURITY.md](SECURITY.md).
+UltraCompress is released under the [MIT License](LICENSE).

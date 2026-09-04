@@ -2,7 +2,7 @@
 //! commits, outstanding context, user preferences. Deterministic, regex- and
 //! heuristic-driven — no LLM.
 
-use crate::model::{Block, RcMessage, truncate_chars};
+use crate::model::{truncate_chars, Block, RcMessage};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -64,14 +64,19 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
                     goal_scope_changes.push(sc);
                 }
                 for p in extract_preferences(&text) {
-                    if seen_prefs.insert(normalize_pref(&p)) && s.preferences.len() < MAX_PREFERENCES {
+                    if seen_prefs.insert(normalize_pref(&p))
+                        && s.preferences.len() < MAX_PREFERENCES
+                    {
                         s.preferences.push(p);
                     }
                 }
             }
             crate::model::Role::Assistant => {
                 for b in &m.content {
-                    if let Block::ToolCall { name, arguments, .. } = b {
+                    if let Block::ToolCall {
+                        name, arguments, ..
+                    } = b
+                    {
                         match name.as_str() {
                             "edit" | "write" => {
                                 let path = arg_path(arguments);
@@ -89,7 +94,8 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
                                 }
                             }
                             "bash" => {
-                                if let Some(cmd) = arguments.get("command").and_then(|c| c.as_str()) {
+                                if let Some(cmd) = arguments.get("command").and_then(|c| c.as_str())
+                                {
                                     for c in extract_commits(cmd) {
                                         s.commits.push(c);
                                     }
@@ -105,7 +111,9 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
                     if let Block::ToolResult { text, is_error, .. } = b {
                         if *is_error || looks_failed(text) {
                             if let Some(o) = extract_outstanding(text) {
-                                if seen_outstanding.insert(normalize_pref(&o)) && s.outstanding.len() < MAX_OUTSTANDING {
+                                if seen_outstanding.insert(normalize_pref(&o))
+                                    && s.outstanding.len() < MAX_OUTSTANDING
+                                {
                                     s.outstanding.push(o);
                                 }
                             }
@@ -113,7 +121,9 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
                         // Sticky diagnostic facts: warn/fatal/error lines that
                         // carry codes or statuses agents must not lose.
                         for f in extract_key_facts(text) {
-                            if seen_facts.insert(normalize_pref(&f)) && s.key_facts.len() < MAX_KEY_FACTS {
+                            if seen_facts.insert(normalize_pref(&f))
+                                && s.key_facts.len() < MAX_KEY_FACTS
+                            {
                                 s.key_facts.push(f);
                             }
                         }
@@ -175,7 +185,11 @@ fn detect_scope_change(text: &str) -> Option<String> {
         "one more thing",
         "new requirement",
     ];
-    if triggers.iter().any(|tr| lower.starts_with(tr) || lower.contains(&format!(". {tr}"))) && t.len() > 8 {
+    if triggers
+        .iter()
+        .any(|tr| lower.starts_with(tr) || lower.contains(&format!(". {tr}")))
+        && t.len() > 8
+    {
         Some(truncate_chars(t, 220))
     } else {
         None
@@ -187,9 +201,17 @@ fn extract_preferences(text: &str) -> Vec<String> {
     for line in text.lines() {
         let l = line.trim();
         let lower = l.to_lowercase();
-        let hit = ["always ", "never ", "prefer ", "make sure to ", "don't use ", "do not use ", "keep it "]
-            .iter()
-            .any(|p| lower.starts_with(p));
+        let hit = [
+            "always ",
+            "never ",
+            "prefer ",
+            "make sure to ",
+            "don't use ",
+            "do not use ",
+            "keep it ",
+        ]
+        .iter()
+        .any(|p| lower.starts_with(p));
         if hit && l.len() >= 8 && l.len() <= 200 {
             out.push(truncate_chars(l, 200));
         }
@@ -198,7 +220,10 @@ fn extract_preferences(text: &str) -> Vec<String> {
 }
 
 fn normalize_pref(p: &str) -> String {
-    p.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
+    p.to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn looks_failed(text: &str) -> bool {
@@ -207,7 +232,10 @@ fn looks_failed(text: &str) -> bool {
         return false;
     }
     let lower = text.to_lowercase();
-    lower.contains("error") || lower.contains("failed") || lower.contains("panic") || lower.contains("fatal")
+    lower.contains("error")
+        || lower.contains("failed")
+        || lower.contains("panic")
+        || lower.contains("fatal")
 }
 
 /// Lines that state a diagnostic condition with a code or status token —
@@ -223,8 +251,10 @@ fn extract_key_facts(text: &str) -> Vec<String> {
             continue;
         }
         let lower = l.to_lowercase();
-        let severity =
-            lower.contains("fatal") || lower.contains("error") || lower.contains("warn") || lower.contains("panic");
+        let severity = lower.contains("fatal")
+            || lower.contains("error")
+            || lower.contains("warn")
+            || lower.contains("panic");
         if !severity {
             continue;
         }
@@ -290,14 +320,29 @@ mod tests {
     use crate::model::Role;
 
     fn msg(role: Role, content: Vec<Block>) -> RcMessage {
-        RcMessage { id: format!("m{}", role as u8), role, content, timestamp: None }
+        RcMessage {
+            id: format!("m{}", role as u8),
+            role,
+            content,
+            timestamp: None,
+        }
     }
 
     #[test]
     fn extracts_goal_from_first_user_message() {
         let msgs = vec![
-            msg(Role::User, vec![Block::Text { text: "Fix the auth bug in login flow. Users cannot log in.".into() }]),
-            msg(Role::User, vec![Block::Text { text: "Actually, also refresh session tokens after reset.".into() }]),
+            msg(
+                Role::User,
+                vec![Block::Text {
+                    text: "Fix the auth bug in login flow. Users cannot log in.".into(),
+                }],
+            ),
+            msg(
+                Role::User,
+                vec![Block::Text {
+                    text: "Actually, also refresh session tokens after reset.".into(),
+                }],
+            ),
         ];
         let s = extract(&msgs);
         assert!(s.goal[0].starts_with("Fix the auth bug"));
@@ -322,10 +367,15 @@ mod tests {
     fn extracts_preferences() {
         let msgs = vec![msg(
             Role::User,
-            vec![Block::Text { text: "Always run tests before committing.\nRandom chat line.".into() }],
+            vec![Block::Text {
+                text: "Always run tests before committing.\nRandom chat line.".into(),
+            }],
         )];
         let s = extract(&msgs);
-        assert_eq!(s.preferences, vec!["Always run tests before committing.".to_string()]);
+        assert_eq!(
+            s.preferences,
+            vec!["Always run tests before committing.".to_string()]
+        );
     }
 
     #[test]
@@ -354,6 +404,9 @@ mod tests {
             }],
         )];
         let s = extract(&msgs);
-        assert_eq!(s.commits, vec!["commit: fix(auth): refresh token".to_string()]);
+        assert_eq!(
+            s.commits,
+            vec!["commit: fix(auth): refresh token".to_string()]
+        );
     }
 }

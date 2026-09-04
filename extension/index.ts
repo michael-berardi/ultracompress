@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { runRc } from "./src/bridge";
-import { loadSettings, resolveRcBin, type RcSettings } from "./src/settings";
+import { runUltraCompress } from "./src/bridge";
+import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
 import { buildSnap, listSnaps, writeSnap } from "./src/snapshot";
 import { adaptPayloadForZai, payloadHasDataUrlImages } from "./src/payload";
 import {
@@ -10,40 +10,40 @@ import {
   collectCandidates,
   nextUserIndex,
   type AgentLikeMessage,
-  type RcOp,
+  type UltraCompressOp,
   type TransformResponse,
 } from "./src/transforms";
 import {
   buildCompactStdin,
   formatStatsLine,
-  parseRcArgs,
+  parseUltraCompressArgs,
   toCompactionResult,
   type CompactEventLike,
-  type RcCompactResult,
+  type UltraCompressCompactResult,
 } from "./src/compact-hook";
 
 /**
- * Rapid Compact — content-aware compaction for Pi.
+ * UltraCompress — content-aware compaction for Pi.
  *
- * Compaction:  deterministic VCC brief via the rc binary (no LLM call),
+ * Compaction:  deterministic VCC brief via the UltraCompress binary (no LLM call),
  *              UC packets inline for JSON payloads, smart keep-tail,
  *              token-budget tail rescue, pre-compaction snapshots.
  * Live path:   oversized tool results become UC packets or snap PNG frames
  *              (fixed vision cost) before each LLM call — memoized by hash.
- * Recall:      rc_recall searches the raw session JSONL, so compacted-away
+ * Recall:      ultracompress_recall searches the raw session JSONL, so compacted-away
  *              history stays reachable. Lossless.
  *
- * Failure posture: every rc call is best-effort. If the binary is missing or
+ * Failure posture: every UltraCompress call is best-effort. If the binary is missing or
  * errors, compaction falls through to Pi core and the live path degrades to
- * stock text. Rapid Compact never bricks a session.
+ * stock text. UltraCompress never bricks a session.
  */
 
-const AUTO_CONTINUE_CUSTOM_TYPE = "rapid-compact-auto-continue";
+const AUTO_CONTINUE_CUSTOM_TYPE = "ultracompress-auto-continue";
 
-export default function rapidCompactExtension(pi: ExtensionAPI): void {
-  const settings: RcSettings = loadSettings();
-  const rcBin = resolveRcBin(settings);
-  const transformCache = new Map<string, { op: RcOp; blocks: Array<Record<string, unknown>> }>();
+export default function ultraCompressExtension(pi: ExtensionAPI): void {
+  const settings: UltraCompressSettings = loadSettings();
+  const ultracompressBin = resolveUltraCompressBin(settings);
+  const transformCache = new Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>();
   let lastCalibratedCpt: number | undefined;
   let visionKnown: boolean | null = null;
 
@@ -52,7 +52,7 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-      writeFileSync("/tmp/rapid-compact-debug.json", JSON.stringify(data, null, 2));
+      writeFileSync("/tmp/ultracompress-debug.json", JSON.stringify(data, null, 2));
     } catch {}
   };
 
@@ -81,7 +81,7 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
       const model = ctx?.model as { provider?: string; baseUrl?: string } | undefined;
       const isZai = model?.provider === "zai" || String(model?.baseUrl ?? "").includes("z.ai");
       if (!isZai) return undefined;
-      if (!payloadHasDataUrlImages(event.payload as { messages?: unknown })) return undefined;
+      if (!payloadHasDataUrlImages(event.payload as { messages?: Array<{ content?: unknown }> })) return undefined;
       const n = adaptPayloadForZai(event.payload as { messages?: Array<{ content?: unknown }> });
       if (n > 0) dbg({ zaiFilePartsConverted: n });
     } catch {}
@@ -106,7 +106,7 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
     const candidates = collectCandidates(messages, minChars, keyFor);
     const fresh = candidates.filter((c) => !transformCache.has(c.key));
     if (fresh.length > 0) {
-      // Batch-compute transforms for unseen blocks in one rc call. Synthetic
+      // Batch-compute transforms for unseen blocks in one UltraCompress call. Synthetic
       // minimal messages keep indices stable: one candidate per message.
       const payload = {
         messages: fresh.map((c) => ({
@@ -123,8 +123,8 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
         ucMinChars: settings.uc.minChars,
         ...(lastCalibratedCpt ? { charsPerToken: lastCalibratedCpt } : {}),
       };
-      const res = await runRc<TransformResponse>(
-        rcBin,
+      const res = await runUltraCompress<TransformResponse>(
+        ultracompressBin,
         [
           "transform",
           "--policy",
@@ -151,7 +151,7 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
               blocks: [
                 {
                   type: "text",
-                  text: `${op.head}\n[rapid-compact: ${op.frames.length} image frame(s) hold the archived middle — ${op.frames
+                  text: `${op.head}\n[ultracompress: ${op.frames.length} image frame(s) hold the archived middle — ${op.frames
                     .map((f) => f.id)
                     .join(", ")}]${op.tail}`,
                 },
@@ -182,13 +182,20 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
   });
 
   // ── Compaction ─────────────────────────────────────────────────────────
-  pi.on("session_before_compact", async (event, ctx) => {
+  // Pi exposes this hook at runtime; older extension type declarations omit it.
+  const onCompaction = pi.on as unknown as (
+    event: "session_before_compact",
+    handler: (event: unknown, ctx: any) => Promise<unknown>,
+  ) => void;
+  onCompaction("session_before_compact", async (event, ctx) => {
     const ev = event as unknown as CompactEventLike;
     const custom = ev.customInstructions?.trim() ?? "";
-    const isExplicitRc = custom === "/rc" || custom.startsWith("/rc ");
-    if (!isExplicitRc && !settings.overrideDefaultCompaction) return undefined;
+    const isExplicitUltraCompress = custom === "/ultracompress" || custom.startsWith("/ultracompress ");
+    if (!isExplicitUltraCompress && !settings.overrideDefaultCompaction) return undefined;
 
-    const args = parseRcArgs(isExplicitRc ? custom.slice(3) : custom);
+    const args = parseUltraCompressArgs(
+      isExplicitUltraCompress ? custom.slice("/ultracompress".length) : custom,
+    );
     const modelVision = (() => {
       try {
         const model = ctx?.model as { input?: string[]; provider?: string } | undefined;
@@ -207,7 +214,7 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
         const { meta, payload } = buildSnap(entries, ev.reason ?? "unknown", now);
         writeSnap(process.cwd(), payload, meta.file);
       } catch (error) {
-        console.error("[rapid-compact] snapshot failed:", error);
+        console.error("[ultracompress] snapshot failed:", error);
       }
     }
 
@@ -223,12 +230,12 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
     });
 
     const rcArgs = ["compact", "--policy", stdin.policy, "--vision", stdin.vision as string];
-    const res = await runRc<RcCompactResult>(rcBin, rcArgs, stdin, 30_000);
+    const res = await runUltraCompress<UltraCompressCompactResult>(ultracompressBin, rcArgs, stdin, 30_000);
     if (!res.ok || !res.data) {
       // Never brick the session: fall through to Pi core compaction.
       dbg({ compactError: res.error, reason: ev.reason });
       try {
-        ctx?.ui?.notify?.(`rapid-compact: rc failed, falling back to core (${res.error?.slice(0, 80)})`, "warning");
+        ctx?.ui?.notify?.(`ultracompress: UltraCompress failed, falling back to core (${res.error?.slice(0, 80)})`, "warning");
       } catch {}
       return undefined;
     }
@@ -249,28 +256,28 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
   });
 
   // ── Commands ───────────────────────────────────────────────────────────
-  pi.registerCommand("rc", {
-    description: "Compact now with Rapid Compact (keep:N policy:auto|vcc|snap|uc, optional follow-up prompt)",
+  pi.registerCommand("ultracompress", {
+    description: "Compact now with UltraCompress (keep:N policy:auto|vcc|snap|uc, optional follow-up prompt)",
     handler: async (args, ctx) => {
-      const custom = args?.trim() ? `/rc ${args.trim()}` : "/rc";
+      const custom = args?.trim() ? `/ultracompress ${args.trim()}` : "/ultracompress";
       try {
         await ctx.compact({
           customInstructions: custom,
-          onComplete: () => ctx.ui.notify("rapid-compact: compaction complete", "info"),
-          onError: (error: Error) => ctx.ui.notify(`rapid-compact failed: ${error.message}`, "error"),
+          onComplete: () => ctx.ui.notify("ultracompress: compaction complete", "info"),
+          onError: (error: Error) => ctx.ui.notify(`ultracompress failed: ${error.message}`, "error"),
         });
       } catch (error) {
-        ctx.ui.notify(`rapid-compact failed: ${String(error)}`, "error");
+        ctx.ui.notify(`ultracompress failed: ${String(error)}`, "error");
       }
     },
   });
 
-  pi.registerCommand("rc-recall", {
+  pi.registerCommand("ultracompress-recall", {
     description: "Search this session's raw history (compacted turns included)",
     handler: async (args, ctx) => {
       const query = args?.trim();
       if (!query) {
-        await ctx.ui.notify("usage: /rc-recall <keywords | /regex/> [scope:all]", "info");
+        await ctx.ui.notify("usage: /ultracompress-recall <keywords | /regex/> [scope:all]", "info");
         return;
       }
       const sessionFile = ctx.sessionManager.getSessionFile();
@@ -280,12 +287,12 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
       }
       const scopeAll = /(?:^|\s)scope:all(?=\s|$)/.test(query);
       const q = query.replace(/(?:^|\s)scope:all(?=\s|$)/, "").trim();
-      const res = await runRc(rcBin, [
+      const res = await runUltraCompress(ultracompressBin, [
         "recall", "--session", sessionFile, "--query", q,
         ...(scopeAll ? ["--scope", "all"] : []), "--per-page", "8",
       ], null);
       if (!res.ok || !res.data) {
-        await ctx.ui.notify(`rc recall failed: ${res.error}`, "error");
+        await ctx.ui.notify(`UltraCompress recall failed: ${res.error}`, "error");
         return;
       }
       const r = res.data as { total: number; page: number; page_count: number; hits: Array<{ role: string; score: number; snippet: string; matched_terms: string[] }> };
@@ -297,12 +304,12 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("rc-stats", {
-    description: "Rapid Compact status and settings",
+  pi.registerCommand("ultracompress-stats", {
+    description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
       const lines = [
-        `rapid-compact ${"0.1.0"}`,
-        `rc binary: ${rcBin}`,
+        `ultracompress ${"0.1.0"}`,
+        `UltraCompress binary: ${ultracompressBin}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
         `uc: ${settings.uc.enabled ? "on" : "off"} (${settings.uc.bin}) · snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
         `transforms cached: ${transformCache.size}`,
@@ -325,14 +332,14 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
 
   // ── Tools ──────────────────────────────────────────────────────────────
   pi.registerTool({
-    name: "rc_recall",
-    label: "Rapid Recall",
+    name: "ultracompress_recall",
+    label: "UltraCompress Recall",
     description:
       "Recall earlier parts of this session — decisions, files, commands — including everything dropped by " +
       "compaction. The raw history stays on disk and searchable: reach for this BEFORE telling the user you " +
       "no longer have context. Plain keywords rank by relevance; a regex pattern also works. Results are paged.",
     promptSnippet:
-      "rc_recall: search this session's full raw history (compacted turns included) before saying context is lost. Plain keywords work best; scope:'all' widens the search.",
+      "ultracompress_recall: search this session's full raw history (compacted turns included) before saying context is lost. Plain keywords work best; scope:'all' widens the search.",
     parameters: {
       type: "object",
       properties: {
@@ -345,17 +352,17 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const sessionFile = ctx.sessionManager.getSessionFile();
       if (!sessionFile) {
-        return { content: [{ type: "text", text: "No session file available to search." }] };
+        return { content: [{ type: "text", text: "No session file available to search." }], details: {} };
       }
       const query = String(params.query ?? "");
       const scopeAll = params.scope === "all";
       const page = typeof params.page === "number" && params.page >= 1 ? Math.floor(params.page) : 1;
-      const res = await runRc(rcBin, [
+      const res = await runUltraCompress(ultracompressBin, [
         "recall", "--session", sessionFile, "--query", query,
         ...(scopeAll ? ["--scope", "all"] : []), "--page", String(page),
       ], null);
       if (!res.ok || !res.data) {
-        return { content: [{ type: "text", text: `rc recall failed: ${res.error}` }] };
+        return { content: [{ type: "text", text: `UltraCompress recall failed: ${res.error}` }], details: {} };
       }
       const r = res.data as { total: number; page: number; page_count: number; hits: Array<{ entry_id: string; role: string; score: number; snippet: string; matched_terms: string[] }> };
       const lines = [
@@ -367,18 +374,18 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
         ),
         ...(r.hits.length === 0 ? ["No hits. Try fewer or different keywords."] : []),
       ];
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
     },
   });
 
   pi.registerTool({
-    name: "rc_uc",
+    name: "ultracompress_uc",
     label: "UC Decode",
     description:
-      "Decode a rapid-compact UC packet back to exact JSON. UC packets appearing in context (marked " +
-      "'[UC packet…decode via rc_uc decode]') are lossless compressed JSON; pass the packet text to recover " +
+      "Decode an UltraCompress UC packet back to exact JSON. UC packets appearing in context (marked " +
+      "'[UC packet…decode via ultracompress_uc decode]') are lossless compressed JSON; pass the packet text to recover " +
       "the original payload verbatim.",
-    promptSnippet: "rc_uc: decode a UC packet (lossless compressed JSON) back to exact JSON when its detail is needed.",
+    promptSnippet: "ultracompress_uc: decode a UC packet (lossless compressed JSON) back to exact JSON when its detail is needed.",
     parameters: {
       type: "object",
       properties: {
@@ -388,17 +395,17 @@ export default function rapidCompactExtension(pi: ExtensionAPI): void {
     },
     async execute(_id, params) {
       const packet = String(params.packet ?? "");
-      if (!packet) return { content: [{ type: "text", text: "No packet provided." }] };
-      const res = await runRc<{ decoded?: string; error?: string }>(
-        rcBin, ["uc", "decode"], { packet },
+      if (!packet) return { content: [{ type: "text", text: "No packet provided." }], details: {} };
+      const res = await runUltraCompress<{ decoded?: string; error?: string }>(
+        ultracompressBin, ["uc", "decode"], { packet },
       );
       if (!res.ok || !res.data) {
-        return { content: [{ type: "text", text: `rc uc decode failed: ${res.error}` }] };
+        return { content: [{ type: "text", text: `UltraCompress UC decode failed: ${res.error}` }], details: {} };
       }
       if (res.data.error) {
-        return { content: [{ type: "text", text: `decode error: ${res.data.error}` }] };
+        return { content: [{ type: "text", text: `decode error: ${res.data.error}` }], details: {} };
       }
-      return { content: [{ type: "text", text: res.data.decoded ?? "(empty)" }] };
+      return { content: [{ type: "text", text: res.data.decoded ?? "(empty)" }], details: {} };
     },
   });
 }

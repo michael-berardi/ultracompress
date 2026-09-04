@@ -1,4 +1,4 @@
-# Rapid Compact — Benchmarks
+# UltraCompress — Benchmarks
 
 All numbers reproducible from this repo. Three benchmark families:
 
@@ -11,13 +11,13 @@ All numbers reproducible from this repo. Three benchmark families:
    queries, top-k entry match.
 3. **Live** (`scripts/live-bench.sh` + `scripts/live-bench-report.mjs`) —
    identical multi-step task, identical model (zai/glm-5.3-flash), identical
-   ~23.6k compaction threshold, three stacks: stock Pi, Pi + Rapid Compact,
+   ~23.6k compaction threshold, three stacks: stock Pi, Pi + UltraCompress,
    OMP forced to snapcompact-only. Real billed tokens and cost from session
    usage records. Every completed run is reported — no cherry-picking.
 
 ## 1. Offline — 12 real sessions (≥ 40k tokens)
 
-| session | msgs | raw tok | stock-pi | vcc-only | rc-auto | stock ↓ | vcc ↓ | rc-auto ↓ |
+| session | msgs | raw tok | stock-pi | vcc-only | ultracompress-auto | stock ↓ | vcc ↓ | ultracompress-auto ↓ |
 |---|---|---|---|---|---|---|---|---|
 | 09-03T13 | 51 | 51,521 | 19,415 | 7,591 | 7,591 | 62.3% | 85.3% | 85.3% |
 | 09-03T14 | 62 | 52,312 | 20,103 | 11,350 | 11,350 | 61.6% | 78.3% | 78.3% |
@@ -32,7 +32,7 @@ All numbers reproducible from this repo. Three benchmark families:
 | 09-04T13b | 256 | 169,591 | 19,274 | 27,709 | 29,049 | 88.6% | 83.7% | 82.9% |
 | 09-04T13c | 155 | 104,114 | 21,090 | 46,260 | 46,260 | 79.7% | 55.6% | 55.6% |
 
-**Averages: stock-pi ↓ 79.8% · vcc-only ↓ 78.8% · rc-auto ↓ 79.0%**
+**Averages: stock-pi ↓ 79.8% · vcc-only ↓ 78.8% · ultracompress-auto ↓ 79.0%**
 
 ### Read this honestly
 
@@ -40,10 +40,10 @@ On raw post-compaction *footprint*, the three stacks land within ~1% —
 stock Pi's fixed 20,000-token verbatim tail bounds its downside. Footprint
 was never the differentiator, because a small context that lost the
 information is worse than a slightly larger one that kept it. What the
-table does show: Rapid Compact holds stock-Pi-level footprint while keeping
+table does show: UltraCompress holds stock-Pi-level footprint while keeping
 every byte recoverable and spending zero API cost. The differentiators:
 
-| | stock Pi | pi-vcc (VCC) | Rapid Compact |
+| | stock Pi | pi-vcc (VCC) | UltraCompress |
 |---|---|---|---|
 | Summary generation | LLM call (seconds, $$, non-deterministic, can hallucinate) | deterministic, 10–30 ms | deterministic, 10–300 ms |
 | Compaction API cost | 1 LLM call per compaction | **$0** | **$0** |
@@ -57,7 +57,7 @@ every byte recoverable and spending zero API cost. The differentiators:
 
 72 sampled facts (real tool results from compacted-away spans):
 
-| metric | Rapid Compact | stock Pi |
+| metric | UltraCompress | stock Pi |
 |---|---|---|
 | hit@1 | 66.7% | **0%** — history is destroyed |
 | hit@5 | **94.4%** | 0% |
@@ -80,20 +80,20 @@ Endpoint latency varies heavily run-to-run; every completed run is listed.
 | stock-pi (run A) | 160,405 | 1 | $0.0061 | 198s | ✓ |
 | stock-pi (run B) | 191,791 | 2 | $0.0080 | 427s | ✓ |
 | stock-pi (run C) | 334,118 | 3 | $0.0156 | 900s timeout | ✗ (killed mid-task) |
-| rapid-compact (run A) | 152,311 | **0** | $0.0066 | 196s | ✓ |
-| rapid-compact (run B) | 268,410 | **0** (2 rc-owned) | $0.0128 | 518s | ✓ |
-| rapid-compact (run C) | 475,016 | **0** | $0.0120 | 366s | ✓ |
+| ultracompress (run A) | 152,311 | **0** | $0.0066 | 196s | ✓ |
+| ultracompress (run B) | 268,410 | **0** (2 UltraCompress-owned) | $0.0128 | 518s | ✓ |
+| ultracompress (run C) | 475,016 | **0** | $0.0120 | 366s | ✓ |
 | omp-snapcompact | 752,969 | 0 (pruned instead) | $0.0516 | 434s | ✓ |
 
 Findings:
 
-- **Correctness: 3/3 for Rapid Compact** (and stock 2/3; the run C timeout
+- **Correctness: 3/3 for UltraCompress** (and stock 2/3; the run C timeout
   is our harness limit, reported as-is). OMP 1/1.
-- **Rapid Compact never spends an LLM call on compaction.** Stock pays one
-  API summarization call per compaction event. Rapid Compact's brief is
+- **UltraCompress never spends an LLM call on compaction.** Stock pays one
+  API summarization call per compaction event. UltraCompress's brief is
   computed locally in 10–300 ms, deterministic, and free.
 - **Information retention decided a real run**: after two compactions the
-  rc stack still produced exact error codes (`E-8341-DEPLOY`) from logs
+  UltraCompress stack still produced exact error codes (`E-8341-DEPLOY`) from logs
   read before compaction — sticky Key Facts carry them; stock's summary
   paraphrase is luck.
 - **OMP at up to 8× the cost**: $0.0516 vs $0.0066 in the same batch, 32
@@ -103,7 +103,7 @@ Findings:
   a heavy token price.
 - **Provider reality check**: z.ai's coding endpoint rejects standard OpenAI
   image parts, so snap frames are provider-gated (anthropic/google by
-  default). On zai, Rapid Compact runs VCC + UC — and still wins on cost,
+  default). On zai, UltraCompress runs VCC + UC — and still wins on cost,
   latency, and information retention.
 
 ## 4. Engineering-quality gates
@@ -112,7 +112,7 @@ Findings:
 - Determinism: same session + same config ⇒ byte-identical summary
 - Never-worse rule: UC packets ship only when UC reports real savings; snap
   frames only when line-aware economics beat text by ≥ 25%
-- Fallback-first: every rc call is best-effort; any failure degrades to Pi
+- Fallback-first: every UltraCompress call is best-effort; any failure degrades to Pi
   core compaction — a session can never be bricked by the extension
 
 ## Reproduce

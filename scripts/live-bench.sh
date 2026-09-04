@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Live compaction benchmark: identical task, three compaction stacks.
 #   stock-pi : Pi core LLM-summary compaction
-#   rc       : Pi + rapid-compact extension (VCC brief + snap frames + UC)
+#   ultracompress : Pi + ultracompress extension (VCC brief + snap frames + UC)
 #   omp      : Oh My Pi forced to snapcompact-only (toolResults on, auto shape)
 #
 # Metrics per run: billed input tokens (incl. cache reads), output tokens,
 # cost, wall time, compaction events, answer correctness.
 set -euo pipefail
 
-BENCH=/tmp/rc-live-bench
+BENCH=/tmp/ultracompress-live-bench
 WS=$BENCH/ws
 OUT=$BENCH/results
 MODEL_PI="zai/glm-5.3-flash"
 THRESHOLD=23616
 STORE=~/.pi/agent/models-store.json
-RC_EXT="$HOME/dev/rapid-compact/extension/index.ts"
+ULTRACOMPRESS_EXT="$HOME/dev/ultracompress/extension/index.ts"
 mkdir -p "$OUT"
 
 gen_workspace() {
@@ -47,13 +47,13 @@ def log(path, lines, err_code, err_line):
                 f.write(err_line.format(code=err_code, n=i) + "\n")
             else:
                 f.write(f"[{i:05d}] INFO worker pool tick processed=ok latency={random.randint(2,40)}ms queue={random.randint(0,12)}\n")
-log("/tmp/rc-live-bench/ws/logs/deploy.log", 700, "E-8341-DEPLOY", "[{n:05d}] FATAL deploy orchestrator rollback code={code} stage=canary")
-log("/tmp/rc-live-bench/ws/logs/build.log", 700, "W-2210-CACHE", "[{n:05d}] WARN build cache evicted entry=stale size={n}kb")
+log("/tmp/ultracompress-live-bench/ws/logs/deploy.log", 700, "E-8341-DEPLOY", "[{n:05d}] FATAL deploy orchestrator rollback code={code} stage=canary")
+log("/tmp/ultracompress-live-bench/ws/logs/build.log", 700, "W-2210-CACHE", "[{n:05d}] WARN build cache evicted entry=stale size={n}kb")
 # Two JSON data files (~12k chars each)
 import json
 for name, n in (("inventory", 120), ("telemetry", 90)):
     data = {"records": [{"id": k, "name": f"{name}-{k:04d}", "tags": ["a","b","c"], "score": k*3} for k in range(n)]}
-    open(f"/tmp/rc-live-bench/ws/data/{name}.json", "w").write(json.dumps(data, indent=1))
+    open(f"/tmp/ultracompress-live-bench/ws/data/{name}.json", "w").write(json.dumps(data, indent=1))
 PYEOF
 }
 
@@ -61,7 +61,7 @@ patch_window() {
   python3 - "$STORE" <<'PYEOF'
 import json, shutil, sys
 p = sys.argv[1]
-shutil.copy(p, p + ".rc-bench-backup")
+shutil.copy(p, p + ".ultracompress-bench-backup")
 m = json.load(open(p))
 for x in m["zai"]["models"]:
     if x["id"] == "glm-5.3-flash":
@@ -72,7 +72,7 @@ PYEOF
 }
 
 restore_window() {
-  local bak="$STORE.rc-bench-backup"
+  local bak="$STORE.ultracompress-bench-backup"
   [ -f "$bak" ] && cp "$bak" "$STORE" && rm -f "$bak" && echo "models-store restored"
 }
 trap 'restore_window 2>/dev/null || true' EXIT
@@ -89,17 +89,17 @@ run_stock_pi() {
   echo "$(( $(date +%s) - t0 ))" > "$OUT/stock.secs"
 }
 
-run_rc() {
-  echo "── rapid-compact ──"
-  local dir=$WS-rc
+run_ultracompress() {
+  echo "── ultracompress ──"
+  local dir=$WS-ultracompress
   rm -rf "$dir"; cp -r "$WS" "$dir"
   patch_window
   local t0=$(date +%s)
   (cd "$dir" && timeout 900 pi --print --no-extensions --no-skills --no-prompt-templates \
-      -e "$RC_EXT" \
-      --model "$MODEL_PI" "$(cat $BENCH/task.txt)" > "$OUT/rc.jsonl" 2> "$OUT/rc.err") || true
+      -e "$ULTRACOMPRESS_EXT" \
+      --model "$MODEL_PI" "$(cat $BENCH/task.txt)" > "$OUT/ultracompress.jsonl" 2> "$OUT/ultracompress.err") || true
   restore_window
-  echo "$(( $(date +%s) - t0 ))" > "$OUT/rc.secs"
+  echo "$(( $(date +%s) - t0 ))" > "$OUT/ultracompress.secs"
 }
 
 run_omp() {
@@ -123,9 +123,9 @@ run_omp() {
 case "${1:-all}" in
   gen)   gen_workspace ;;
   stock) run_stock_pi ;;
-  rc)    run_rc ;;
+  ultracompress|rc) run_ultracompress ;;
   omp)   run_omp ;;
   patch) patch_window ;;
   restore) restore_window ;;
-  all)   gen_workspace; patch_window; run_stock_pi; run_rc; restore_window; run_omp ;;
+  all)   gen_workspace; run_stock_pi; run_ultracompress; run_omp ;;
 esac

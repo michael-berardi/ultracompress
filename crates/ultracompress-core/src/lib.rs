@@ -1,4 +1,4 @@
-//! Rapid Compact core — content-aware conversation compaction.
+//! UltraCompress core — content-aware conversation compaction.
 //!
 //! Three engines, one policy:
 //! - VCC: deterministic section brief + rolling transcript (no LLM)
@@ -18,8 +18,8 @@ pub mod policy;
 pub mod recall;
 pub mod sections;
 pub mod snap;
-pub mod transform;
 pub mod transcript;
+pub mod transform;
 pub mod ucbridge;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

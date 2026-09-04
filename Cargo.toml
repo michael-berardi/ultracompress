@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/rc-core", "crates/rc-cli"]
+members = ["crates/ultracompress-core", "crates/ultracompress-cli"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/sting8k/rapid-compact"
-description = "Rapid Compact — content-aware conversation compaction: VCC briefs, snap frames, UC packets, one policy engine."
+repository = "https://github.com/michael-berardi/ultracompress"
+description = "UltraCompress — content-aware conversation compaction: VCC briefs, snap frames, UC packets, one policy engine."
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

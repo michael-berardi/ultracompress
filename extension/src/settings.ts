@@ -18,35 +18,36 @@ export interface SnapSettings {
   providers: string[];
 }
 
-export interface RcSettings {
+export interface UltraCompressSettings {
   policy: "auto" | "vcc" | "snap" | "uc";
   overrideDefaultCompaction: boolean;
   smartKeepTail: boolean;
   keepUserTurns: number | null;
-  rcBin: string;
+  ultracompressBin: string;
   uc: UcSettings;
   snap: SnapSettings;
   snapshot: { enabled: boolean };
   debug: boolean;
 }
 
-export const DEFAULT_SETTINGS: RcSettings = {
+export const DEFAULT_SETTINGS: UltraCompressSettings = {
   policy: "auto",
   overrideDefaultCompaction: true,
   smartKeepTail: true,
   keepUserTurns: null,
-  rcBin: "",
+  ultracompressBin: "",
   uc: { enabled: true, bin: "uc", minChars: 1200 },
   snap: { enabled: true, minChars: 6000, placement: "nextUser", imageTokensPerFrame: null, providers: ["anthropic", "google"] },
   snapshot: { enabled: true },
   debug: false,
 };
 
-export const SETTINGS_PATH = path.join(os.homedir(), ".pi", "agent", "rapid-compact.json");
+export const SETTINGS_PATH = path.join(os.homedir(), ".pi", "agent", "ultracompress.json");
+export const LEGACY_SETTINGS_PATH = path.join(os.homedir(), ".pi", "agent", "rapid-compact.json");
 
 /** Merge partial user JSON over defaults; unknown keys ignored, types coerced. */
-export function mergeSettings(raw: unknown): RcSettings {
-  const out: RcSettings = structuredClone(DEFAULT_SETTINGS);
+export function mergeSettings(raw: unknown): UltraCompressSettings {
+  const out: UltraCompressSettings = structuredClone(DEFAULT_SETTINGS);
   if (raw === null || typeof raw !== "object") return out;
   const obj = raw as Record<string, unknown>;
   if (isPolicy(obj.policy)) out.policy = obj.policy;
@@ -57,7 +58,9 @@ export function mergeSettings(raw: unknown): RcSettings {
   } else if (obj.keepUserTurns === null) {
     out.keepUserTurns = null;
   }
-  if (typeof obj.rcBin === "string") out.rcBin = obj.rcBin;
+  if (typeof obj.ultracompressBin === "string") out.ultracompressBin = obj.ultracompressBin;
+  // One-release migration alias; new files always write ultracompressBin.
+  else if (typeof obj.rcBin === "string") out.ultracompressBin = obj.rcBin;
   if (typeof obj.debug === "boolean") out.debug = obj.debug;
   if (obj.uc && typeof obj.uc === "object") {
     const uc = obj.uc as Record<string, unknown>;
@@ -83,16 +86,27 @@ export function mergeSettings(raw: unknown): RcSettings {
   return out;
 }
 
-function isPolicy(v: unknown): v is RcSettings["policy"] {
+function isPolicy(v: unknown): v is UltraCompressSettings["policy"] {
   return v === "auto" || v === "vcc" || v === "snap" || v === "uc";
 }
 
 /** Load settings, scaffolding the file with defaults on first run. */
-export function loadSettings(settingsPath = SETTINGS_PATH): RcSettings {
+export function loadSettings(settingsPath = SETTINGS_PATH): UltraCompressSettings {
   try {
     const raw = fs.readFileSync(settingsPath, "utf8");
     return mergeSettings(JSON.parse(raw));
   } catch {
+    // Migrate the old product-name config once; never delete user data.
+    if (settingsPath === SETTINGS_PATH) {
+      try {
+        const migrated = mergeSettings(JSON.parse(fs.readFileSync(LEGACY_SETTINGS_PATH, "utf8")));
+        fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+        fs.writeFileSync(settingsPath, JSON.stringify(migrated, null, 2) + "\n");
+        return migrated;
+      } catch {
+        // no legacy config — scaffold defaults below
+      }
+    }
     try {
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
       fs.writeFileSync(settingsPath, JSON.stringify(DEFAULT_SETTINGS, null, 2) + "\n");
@@ -103,18 +117,22 @@ export function loadSettings(settingsPath = SETTINGS_PATH): RcSettings {
   }
 }
 
-/** Resolve the rc binary: env → config → ~/.local/bin/rc → ~/.cargo/bin/rc → dev build → PATH. */
-export function resolveRcBin(settings: RcSettings, extensionDir = path.dirname(new URL(import.meta.url).pathname)): string {
+/** Resolve the UltraCompress binary: env → config → ~/.local/bin/ultracompress → ~/.cargo/bin/ultracompress → dev build → PATH. */
+export function resolveUltraCompressBin(settings: UltraCompressSettings, extensionDir = path.dirname(new URL(import.meta.url).pathname)): string {
   const candidates: string[] = [];
-  if (process.env.RC_BIN) candidates.push(process.env.RC_BIN);
-  if (settings.rcBin) {
-    candidates.push(settings.rcBin.replace(/^~(?=\/|$)/, os.homedir()));
+  if (process.env.ULTRACOMPRESS_BIN) candidates.push(process.env.ULTRACOMPRESS_BIN);
+  if (settings.ultracompressBin) {
+    candidates.push(settings.ultracompressBin.replace(/^~(?=\/|$)/, os.homedir()));
   }
+  candidates.push(path.join(os.homedir(), ".local", "bin", "ultracompress"));
+  candidates.push(path.join(os.homedir(), ".cargo", "bin", "ultracompress"));
+  // src/ → extension/ → repo root
+  candidates.push(path.join(extensionDir, "..", "..", "target", "release", "ultracompress"));
+  candidates.push(path.join(extensionDir, "target", "release", "ultracompress"));
+  // Compatibility with installs from before the product rename.
+  if (process.env.RC_BIN) candidates.push(process.env.RC_BIN);
   candidates.push(path.join(os.homedir(), ".local", "bin", "rc"));
   candidates.push(path.join(os.homedir(), ".cargo", "bin", "rc"));
-  // src/ → extension/ → repo root
-  candidates.push(path.join(extensionDir, "..", "..", "target", "release", "rc"));
-  candidates.push(path.join(extensionDir, "target", "release", "rc"));
   for (const c of candidates) {
     try {
       fs.accessSync(c, fs.constants.X_OK);
@@ -123,5 +141,5 @@ export function resolveRcBin(settings: RcSettings, extensionDir = path.dirname(n
       // try next
     }
   }
-  return "rc"; // final fallback: PATH
+  return "ultracompress"; // final fallback: PATH
 }

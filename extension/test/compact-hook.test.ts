@@ -2,33 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   buildCompactStdin,
   formatStatsLine,
-  parseRcArgs,
+  parseUltraCompressArgs,
   toCompactionResult,
   type CompactEventLike,
-  type RcCompactResult,
+  type UltraCompressCompactResult,
 } from "../src/compact-hook.ts";
 
-describe("parseRcArgs", () => {
+describe("parseUltraCompressArgs", () => {
   it("parses keep and policy plus prompt", () => {
-    const r = parseRcArgs("keep:3 policy:vcc check the deploy logs");
+    const r = parseUltraCompressArgs("keep:3 policy:vcc check the deploy logs");
     expect(r.keep).toBe(3);
     expect(r.policy).toBe("vcc");
     expect(r.prompt).toBe("check the deploy logs");
   });
 
   it("handles bare prompt and empty args", () => {
-    expect(parseRcArgs("just continue").keep).toBeNull();
-    expect(parseRcArgs("just continue").prompt).toBe("just continue");
-    expect(parseRcArgs(undefined)).toEqual({ keep: null, policy: null, prompt: "" });
+    expect(parseUltraCompressArgs("just continue").keep).toBeNull();
+    expect(parseUltraCompressArgs("just continue").prompt).toBe("just continue");
+    expect(parseUltraCompressArgs(undefined)).toEqual({ keep: null, policy: null, prompt: "" });
   });
 
   it("keep:0 means compact everything", () => {
-    expect(parseRcArgs("keep:0").keep).toBe(0);
+    expect(parseUltraCompressArgs("keep:0").keep).toBe(0);
   });
 
   it("parses /compact passthrough keep:N", () => {
-    expect(parseRcArgs("keep:5").keep).toBe(5);
-    expect(parseRcArgs("summarize auth work keep:2").keep).toBe(2);
+    expect(parseUltraCompressArgs("keep:5").keep).toBe(5);
+    expect(parseUltraCompressArgs("summarize auth work keep:2").keep).toBe(2);
   });
 });
 
@@ -65,10 +65,10 @@ describe("buildCompactStdin", () => {
   });
 });
 
-const rcResult: RcCompactResult = {
+const rcResult: UltraCompressCompactResult = {
   summary: "[Session Goal]\n- did things\n",
   first_kept_entry_id: "e7",
-  details: { compactor: "rapid-compact", version: "0.1.0" },
+  details: { compactor: "ultracompress", version: "0.1.0" },
   stats: {
     tokens_before_est: 50_000,
     tokens_after_est: 12_345,
@@ -86,14 +86,14 @@ const rcResult: RcCompactResult = {
 };
 
 describe("toCompactionResult", () => {
-  it("maps rc result into pi compaction shape", () => {
+  it("maps UltraCompress result into pi compaction shape", () => {
     const mapped = toCompactionResult(rcResult, 50_000);
     expect(mapped).not.toBeNull();
     expect(mapped!.summary).toContain("did things");
     expect(mapped!.firstKeptEntryId).toBe("e7");
     expect(mapped!.tokensBefore).toBe(50_000);
-    expect(mapped!.details.compactor).toBe("rapid-compact");
-    expect((mapped!.details.rcStats as { savings_pct: number }).savings_pct).toBeCloseTo(75.3);
+    expect(mapped!.details.compactor).toBe("ultracompress");
+    expect((mapped!.details.ultracompressStats as { savings_pct: number }).savings_pct).toBeCloseTo(75.3);
   });
 
   it("rejects empty summaries", () => {

@@ -3,7 +3,7 @@
  *
  * z.ai's coding endpoint is OpenAI-ish but expects image payloads as
  * `{type:"file", file:{file_data|file_url|file_id}}` parts instead of
- * `{type:"image_url", image_url:{url}}`. Rapid Compact renders snap frames
+ * `{type:"image_url", image_url:{url}}`. UltraCompress renders snap frames
  * as base64 PNG blocks; this adapter rewrites them per-provider so frames
  * reach models that pi's generic serializer can't service.
  */

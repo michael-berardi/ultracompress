@@ -21,7 +21,7 @@ pub struct LoadedSession {
 /// replaying entries along that path in order. Compaction entries mark summary
 /// boundaries; `include_pre_compaction` controls whether messages before the
 /// last compaction boundary are included (they exist on disk and stay
-/// searchable — Rapid Compact uses this for lossless recall).
+/// searchable — UltraCompress uses this for lossless recall).
 pub fn load_session(path: &Path, include_pre_compaction: bool) -> std::io::Result<LoadedSession> {
     let raw = std::fs::read_to_string(path)?;
     parse_session_str(&raw, include_pre_compaction)
@@ -45,11 +45,23 @@ pub fn parse_session_str(raw: &str, include_pre_compaction: bool) -> Option<Load
         let obj = v.as_object()?;
         match obj.get("type").and_then(|t| t.as_str()) {
             Some("session") => {
-                session_id = obj.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-                cwd = obj.get("cwd").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                session_id = obj
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                cwd = obj
+                    .get("cwd")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
             }
             Some(ty) => {
-                let id = obj.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                let id = obj
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let parent = obj
                     .get("parentId")
                     .and_then(|p| p.as_str())
@@ -61,7 +73,12 @@ pub fn parse_session_str(raw: &str, include_pre_compaction: bool) -> Option<Load
     }
 
     if entries.is_empty() {
-        return Some(LoadedSession { session_id, cwd, messages: vec![], entry_count: 0 });
+        return Some(LoadedSession {
+            session_id,
+            cwd,
+            messages: vec![],
+            entry_count: 0,
+        });
     }
 
     // Walk from the last entry back to the root to find the active branch.
@@ -121,9 +138,11 @@ pub fn parse_session_str(raw: &str, include_pre_compaction: bool) -> Option<Load
                     .get("firstKeptEntryId")
                     .and_then(|k| k.as_str())
                     .unwrap_or("");
-                match if kept_id
-                    .is_empty() { None } else { index_by_id.get(kept_id).copied() }
-                {
+                match if kept_id.is_empty() {
+                    None
+                } else {
+                    index_by_id.get(kept_id).copied()
+                } {
                     Some(ki) => path_idx.iter().position(|&x| x == ki).unwrap_or(pos + 1),
                     None => pos + 1,
                 }
@@ -176,7 +195,11 @@ mod tests {
     fn active_branch_honors_compaction_boundary() {
         let s = parse_session_str(SAMPLE, false).unwrap();
         assert_eq!(s.session_id, "sess1");
-        assert_eq!(s.messages.len(), 2, "only post-compaction messages are live");
+        assert_eq!(
+            s.messages.len(),
+            2,
+            "only post-compaction messages are live"
+        );
         assert_eq!(s.messages[0].text_preview(20), "second");
     }
 

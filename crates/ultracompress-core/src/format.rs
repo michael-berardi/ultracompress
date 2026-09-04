@@ -38,7 +38,7 @@ impl PreviousSummary {
         let mut current = "";
         for line in text.lines() {
             let l = line.trim_end();
-            if l.starts_with('[') && l.ends_with(']') && !l.starts_with("[rc-archive") {
+            if l.starts_with('[') && l.ends_with(']') && !l.starts_with("[ultracompress-archive") {
                 current = &l[1..l.len() - 1];
                 continue;
             }
@@ -224,14 +224,14 @@ pub fn render(
                 o.push_str(a);
                 o.push('\n');
             }
-            o.push_str("- Recover verbatim detail with rc_recall (raw session history is preserved).\n");
+            o.push_str("- Recover verbatim detail with ultracompress_recall (raw session history is preserved).\n");
         });
     }
     if !transcript.lines.is_empty() {
         section("Transcript", &|o| {
             if transcript.omitted_lines > 0 {
                 o.push_str(&format!(
-                    "- ({} earlier lines omitted; full history recoverable via rc_recall)\n",
+                    "- ({} earlier lines omitted; full history recoverable via ultracompress_recall)\n",
                     transcript.omitted_lines
                 ));
             }
@@ -271,8 +271,14 @@ mod tests {
             key_facts: vec![],
         };
         let m = merge(Some(&prev), &new);
-        assert_eq!(m.goal, vec!["Fix auth".to_string(), "Add feature".to_string()]);
-        assert_eq!(m.files_modified, vec!["a.ts".to_string(), "b.ts".to_string()]);
+        assert_eq!(
+            m.goal,
+            vec!["Fix auth".to_string(), "Add feature".to_string()]
+        );
+        assert_eq!(
+            m.files_modified,
+            vec!["a.ts".to_string(), "b.ts".to_string()]
+        );
         assert_eq!(m.commits, vec!["c1".to_string(), "c2".to_string()]);
         assert_eq!(m.outstanding, vec!["new error".to_string()]);
     }
@@ -284,7 +290,12 @@ mod tests {
             ..Default::default()
         };
         let t = Transcript::default();
-        let text = render(&s, &t, &["[rc-archive frame f1: bash output]".to_string()], &[]);
+        let text = render(
+            &s,
+            &t,
+            &["[ultracompress-archive frame f1: bash output]".to_string()],
+            &[],
+        );
         assert!(text.contains("[Session Goal]"));
         let parsed = PreviousSummary::parse(&text);
         assert!(parsed.is_some());
@@ -309,7 +320,10 @@ mod tests {
         assert_eq!(p.files_created, vec!["src/b.ts".to_string()]);
         assert_eq!(p.files_read, vec!["src/c.ts".to_string()]);
         assert_eq!(p.commits, vec!["commit: init".to_string()]);
-        assert_eq!(p.key_facts, vec!["E-8341-DEPLOY fatal rollback".to_string()]);
+        assert_eq!(
+            p.key_facts,
+            vec!["E-8341-DEPLOY fatal rollback".to_string()]
+        );
         assert_eq!(p.preferences, vec!["Always lint".to_string()]);
     }
 }

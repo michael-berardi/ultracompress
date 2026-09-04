@@ -155,14 +155,30 @@ fn parse_block(v: &Value) -> Option<Block> {
     let ty = obj.get("type")?.as_str()?;
     match ty {
         "text" => Some(Block::Text {
-            text: obj.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+            text: obj
+                .get("text")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "thinking" => Some(Block::Thinking {
-            thinking: obj.get("thinking").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-            text: obj.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+            thinking: obj
+                .get("thinking")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
+            text: obj
+                .get("text")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
         "toolCall" | "tool_call" | "toolUse" => Some(Block::ToolCall {
-            id: obj.get("id").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+            id: obj
+                .get("id")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
             name: obj
                 .get("name")
                 .and_then(|t| t.as_str())
@@ -185,7 +201,11 @@ fn parse_block(v: &Value) -> Option<Block> {
                 .unwrap_or("")
                 .to_string(),
             text: extract_tool_result_text(obj.get("content")),
-            is_error: obj.get("isError").or_else(|| obj.get("is_error")).and_then(|t| t.as_bool()).unwrap_or(false),
+            is_error: obj
+                .get("isError")
+                .or_else(|| obj.get("is_error"))
+                .and_then(|t| t.as_bool())
+                .unwrap_or(false),
         }),
         "image" => Some(Block::Image {
             mime_type: obj
@@ -194,10 +214,20 @@ fn parse_block(v: &Value) -> Option<Block> {
                 .and_then(|t| t.as_str())
                 .unwrap_or("image/png")
                 .to_string(),
-            data: obj.get("data").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-            url: obj.get("url").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+            data: obj
+                .get("data")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
+            url: obj
+                .get("url")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string(),
         }),
-        other => Some(Block::Other { kind: other.to_string() }),
+        other => Some(Block::Other {
+            kind: other.to_string(),
+        }),
     }
 }
 
@@ -243,7 +273,11 @@ pub fn parse_message(v: &Value, fallback_id: &str) -> Option<RcMessage> {
             content = normalize_tool_result(content, inner);
         }
         return Some(RcMessage {
-            id: obj.get("id").and_then(|i| i.as_str()).unwrap_or(fallback_id).to_string(),
+            id: obj
+                .get("id")
+                .and_then(|i| i.as_str())
+                .unwrap_or(fallback_id)
+                .to_string(),
             role,
             content,
             timestamp: obj.get("timestamp").and_then(|t| t.as_u64()),
@@ -271,7 +305,9 @@ pub fn parse_message(v: &Value, fallback_id: &str) -> Option<RcMessage> {
 
 /// Coerce a toolResult message's content into ToolResult blocks.
 fn normalize_tool_result(content: Vec<Block>, meta: &serde_json::Map<String, Value>) -> Vec<Block> {
-    let already = content.iter().any(|b| matches!(b, Block::ToolResult { .. }));
+    let already = content
+        .iter()
+        .any(|b| matches!(b, Block::ToolResult { .. }));
     if already {
         return content;
     }

@@ -1,6 +1,6 @@
 /**
  * Compaction hook: pure functions bridging Pi's session_before_compact event
- * to the rc binary contract. Everything here is vitest-testable without a
+ * to the UltraCompress binary contract. Everything here is vitest-testable without a
  * running Pi.
  */
 
@@ -38,7 +38,7 @@ export interface CompactStdin {
   snapMinChars: number;
 }
 
-export interface RcCompactStats {
+export interface UltraCompressCompactStats {
   tokens_before_est: number;
   tokens_after_est: number;
   savings_pct: number;
@@ -52,16 +52,16 @@ export interface RcCompactStats {
   calibrated: boolean;
 }
 
-export interface RcCompactResult {
+export interface UltraCompressCompactResult {
   summary: string;
   first_kept_entry_id: string;
   details: Record<string, unknown>;
-  stats: RcCompactStats;
+  stats: UltraCompressCompactStats;
   uc_status: { available: boolean; version?: string; reason?: string };
 }
 
-/** /rc args: `keep:N [prompt…]`, `policy:<p>`, bare prompt text. */
-export function parseRcArgs(raw: string | undefined): { keep: number | null; policy: string | null; prompt: string } {
+/** /ultracompress args: `keep:N [prompt…]`, `policy:<p>`, bare prompt text. */
+export function parseUltraCompressArgs(raw: string | undefined): { keep: number | null; policy: string | null; prompt: string } {
   const keepMatch = /(?:^|\s)keep:(\d+)(?=\s|$)/.exec(raw ?? "");
   const policyMatch = /(?:^|\s)policy:(auto|vcc|snap|uc)(?=\s|$)/.exec(raw ?? "");
   let prompt = (raw ?? "")
@@ -78,7 +78,7 @@ export function parseRcArgs(raw: string | undefined): { keep: number | null; pol
   };
 }
 
-/** Build the rc compact stdin payload from the event. */
+/** Build the UltraCompress compact stdin payload from the event. */
 export function buildCompactStdin(event: CompactEventLike, opts: {
   policy: string;
   keepUserTurns: number | null;
@@ -109,8 +109,8 @@ export function buildCompactStdin(event: CompactEventLike, opts: {
   return stdin;
 }
 
-/** Map rc result → pi compaction return; null when rc can't own this compact. */
-export function toCompactionResult(rc: RcCompactResult, tokensBefore?: number): {
+/** Map UltraCompress result → pi compaction return; null when UltraCompress can't own this compact. */
+export function toCompactionResult(rc: UltraCompressCompactResult, tokensBefore?: number): {
   summary: string;
   firstKeptEntryId: string;
   tokensBefore?: number;
@@ -123,17 +123,17 @@ export function toCompactionResult(rc: RcCompactResult, tokensBefore?: number): 
     ...(typeof tokensBefore === "number" ? { tokensBefore } : {}),
     details: {
       ...rc.details,
-      compactor: "rapid-compact",
-      rcStats: rc.stats,
+      compactor: "ultracompress",
+      ultracompressStats: rc.stats,
     },
   };
 }
 
-export function formatStatsLine(rc: RcCompactResult): string {
+export function formatStatsLine(rc: UltraCompressCompactResult): string {
   const s = rc.stats;
   const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
   const parts = [
-    `rapid-compact: ${k(s.tokens_before_est)} → ${k(s.tokens_after_est)} tok (-${s.savings_pct.toFixed(0)}%)`,
+    `ultracompress: ${k(s.tokens_before_est)} → ${k(s.tokens_after_est)} tok (-${s.savings_pct.toFixed(0)}%)`,
     `summarized ${s.summarized_messages}, kept ${s.kept_messages}`,
   ];
   if (s.smart_keep_adjusted) parts.push(`smart-keep → ${s.keep_user_turns_resolved}`);

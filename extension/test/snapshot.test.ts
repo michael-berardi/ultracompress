@@ -6,12 +6,12 @@ const ENTRIES = [
   { type: "message", role: "assistant", text: "hi" },
 ];
 
-describe("rapid-compact snapshots (instant-snap compatible)", () => {
+describe("ultracompress snapshots (instant-snap compatible)", () => {
   it("builds a snap with metadata and full entries", () => {
     const { meta, payload } = buildSnap(ENTRIES, "threshold", 1_700_000_000_000);
     expect(meta.reason).toBe("threshold");
     expect(meta.entries).toBe(2);
-    expect(meta.compactor).toBe("rapid-compact");
+    expect(meta.compactor).toBe("ultracompress");
     expect(meta.file).toMatch(/^snap-.*\.json$/);
     const parsed = JSON.parse(payload);
     expect(parsed.snap.createdAt).toBe(1_700_000_000_000);

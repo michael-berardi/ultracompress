@@ -1,0 +1,15 @@
+[package]
+name = "ultracompress"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "UltraCompress CLI (ultracompress) — plan, compact, recall, and stats over Pi coding-agent sessions."
+
+[[bin]]
+name = "ultracompress"
+path = "src/main.rs"
+
+[dependencies]
+ultracompress-core = { path = "../ultracompress-core" }
+serde.workspace = true
+serde_json.workspace = true

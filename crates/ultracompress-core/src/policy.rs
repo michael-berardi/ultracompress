@@ -1,6 +1,6 @@
 //! The policy engine: which engine runs, and why.
 //!
-//! Rapid Compact's core premise is that different content has different
+//! UltraCompress's core premise is that different content has different
 //! cheapest lossy-to-the-model-but-lossless-to-disk representation:
 //!
 //! - JSON payloads  → UC packets (deterministic, model-readable, ~26%+ fewer tokens)
@@ -62,10 +62,22 @@ pub struct EngineMix {
 
 pub fn engine_mix(policy: Policy, uc_available: bool, vision: bool) -> EngineMix {
     match policy {
-        Policy::Auto => EngineMix { uc: uc_available, snap: vision },
-        Policy::Vcc => EngineMix { uc: false, snap: false },
-        Policy::Snap => EngineMix { uc: false, snap: vision },
-        Policy::Uc => EngineMix { uc: uc_available, snap: false },
+        Policy::Auto => EngineMix {
+            uc: uc_available,
+            snap: vision,
+        },
+        Policy::Vcc => EngineMix {
+            uc: false,
+            snap: false,
+        },
+        Policy::Snap => EngineMix {
+            uc: false,
+            snap: vision,
+        },
+        Policy::Uc => EngineMix {
+            uc: uc_available,
+            snap: false,
+        },
     }
 }
 

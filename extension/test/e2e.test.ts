@@ -6,13 +6,13 @@ import * as path from "node:path";
 import * as url from "node:url";
 
 /**
- * End-to-end: real rc binary against a realistic fixture session.
+ * End-to-end: real UltraCompress binary against a realistic fixture session.
  * Skipped when the binary hasn't been built (cargo build --release).
  */
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
-const RC = path.join(here, "..", "..", "target", "release", "rc");
-const hasBinary = fs.existsSync(RC);
+const ULTRACOMPRESS = path.join(here, "..", "..", "target", "release", "ultracompress");
+const hasBinary = fs.existsSync(ULTRACOMPRESS);
 
 const FIXTURE = [
   { type: "session", id: "fx", cwd: "/tmp/proj" },
@@ -30,15 +30,15 @@ const FIXTURE = [
   { type: "message", id: "e6", parentId: "e5", message: { role: "assistant", content: [{ type: "text", text: "Running tests now." }] } },
 ];
 
-function runRc(args: string[], stdin?: unknown): any {
+function runUltraCompress(args: string[], stdin?: unknown): any {
   return JSON.parse(
-    execFileSync(RC, args, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }),
+    execFileSync(ULTRACOMPRESS, args, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }),
   );
 }
 
-describe.skipIf(!hasBinary)("rc binary e2e", () => {
+describe.skipIf(!hasBinary)("UltraCompress binary e2e", () => {
   it("compacts a fixture session with a safe cut", () => {
-    const r = runRc(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], {
+    const r = runUltraCompress(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], {
       entries: FIXTURE.filter((e) => e.type === "message" || e.type === "compaction"),
       tokensBefore: 12_000,
     });
@@ -50,7 +50,7 @@ describe.skipIf(!hasBinary)("rc binary e2e", () => {
   });
 
   it("transforms oversized tool results for the live path", () => {
-    const r = runRc(["transform", "--policy", "auto", "--vision", "on"], {
+    const r = runUltraCompress(["transform", "--policy", "auto", "--vision", "on"], {
       messages: [FIXTURE[3]],
       modelVision: true,
     });
@@ -61,17 +61,17 @@ describe.skipIf(!hasBinary)("rc binary e2e", () => {
   });
 
   it("recalls from a raw session file losslessly", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rc-e2e-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ultracompress-e2e-"));
     const file = path.join(dir, "session.jsonl");
     fs.writeFileSync(file, FIXTURE.map((e) => JSON.stringify(e)).join("\n") + "\n");
-    const r = runRc(["recall", "--session", file, "--query", "unused variables"]);
+    const r = runUltraCompress(["recall", "--session", file, "--query", "unused variables"]);
     expect(r.total).toBeGreaterThanOrEqual(1);
     expect(r.hits[0].snippet).toContain("unused");
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("uc bridge stays graceful when payloads are not JSON", () => {
-    const r = runRc(["uc", "decode"], { packet: "not a packet" });
+    const r = runUltraCompress(["uc", "decode"], { packet: "not a packet" });
     expect(r.error ?? r.decoded).toBeDefined();
   });
 });

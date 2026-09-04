@@ -1,6 +1,6 @@
 //! Snap-frame rendering: turn bulky text into compact PNG image frames.
 //!
-//! This is Rapid Compact's open-source take on OMP's "snapcompact": archive
+//! This is UltraCompress's open-source take on OMP's "snapcompact": archive
 //! text at fixed vision-token cost by rasterizing it into deterministic PNG
 //! frames the model can still read. Text edges (head/tail) stay as text; the
 //! expensive middle becomes pixels. Rendering is fully deterministic — same
@@ -28,7 +28,13 @@ impl Default for SnapConfig {
         // cols == 0 means adaptive: shape is auto-tuned to the content's line
         // length distribution (OMP-style "auto" shape, but per-block instead
         // of per-model). Fixed width via cfg overrides.
-        SnapConfig { cols: 0, rows: 120, head_chars: 600, tail_chars: 400, scale: 1 }
+        SnapConfig {
+            cols: 0,
+            rows: 120,
+            head_chars: 600,
+            tail_chars: 400,
+            scale: 1,
+        }
     }
 }
 
@@ -102,7 +108,11 @@ pub fn plan_snap(
     image_tokens_per_frame: Option<u64>,
     cpt: f64,
 ) -> SnapPlan {
-    let cols = if cfg.cols == 0 { adaptive_cols(text) } else { cfg.cols };
+    let cols = if cfg.cols == 0 {
+        adaptive_cols(text)
+    } else {
+        cfg.cols
+    };
     let rows = cfg.rows;
     let frames_needed = estimate_frames(text, cols, rows);
     let w = (cols as u32) * 8 + 8;
@@ -111,7 +121,14 @@ pub fn plan_snap(
     let snap_tokens = frames_needed as u64 * per_frame;
     let text_tokens = crate::estimate::tokens_from_chars(text.len(), cpt);
     let worthwhile = snap_tokens * 4 <= text_tokens * 3; // ≥25% savings required
-    SnapPlan { cols, rows, frames_needed, snap_tokens, text_tokens, worthwhile }
+    SnapPlan {
+        cols,
+        rows,
+        frames_needed,
+        snap_tokens,
+        text_tokens,
+        worthwhile,
+    }
 }
 
 /// Lay text into grids of (cols × rows) cells, splitting on line boundaries.
@@ -157,7 +174,11 @@ fn split_at_cols(s: &str, cols: usize) -> (&str, &str) {
 /// When cfg.cols == 0 the width is content-adaptive (p90 line length).
 pub fn render_frames(text: &str, label: &str, cfg: &SnapConfig) -> SnapResult {
     let source_chars = text.len();
-    let cols = if cfg.cols == 0 { adaptive_cols(text) } else { cfg.cols };
+    let cols = if cfg.cols == 0 {
+        adaptive_cols(text)
+    } else {
+        cfg.cols
+    };
     let body_start = cfg.head_chars.min(source_chars);
     let body_end = source_chars.saturating_sub(cfg.tail_chars).max(body_start);
     let archived = &text[clamp_boundary(text, body_start)..clamp_boundary(text, body_end)];
@@ -168,7 +189,12 @@ pub fn render_frames(text: &str, label: &str, cfg: &SnapConfig) -> SnapResult {
 
     let mut frames = Vec::with_capacity(grids.len());
     for (i, grid) in grids.iter().enumerate() {
-        let header = format!("── rapid-compact frame {}/{} · {} · archived text, verbatim ──", i + 1, total, label);
+        let header = format!(
+            "── ultracompress frame {}/{} · {} · archived text, verbatim ──",
+            i + 1,
+            total,
+            label
+        );
         let mut buf = String::with_capacity(cfg.rows * (cfg.cols + 1));
         buf.push_str(&header);
         buf.push('\n');
@@ -188,7 +214,9 @@ pub fn render_frames(text: &str, label: &str, cfg: &SnapConfig) -> SnapResult {
         });
     }
 
-    let omitted = source_chars.saturating_sub(body_start).saturating_sub(cfg.tail_chars);
+    let omitted = source_chars
+        .saturating_sub(body_start)
+        .saturating_sub(cfg.tail_chars);
     let head = if body_start > 0 {
         format!("{}\n", truncate_chars(text, body_start).trim_end())
     } else {
@@ -201,7 +229,13 @@ pub fn render_frames(text: &str, label: &str, cfg: &SnapConfig) -> SnapResult {
         String::new()
     };
 
-    SnapResult { frames, head, tail, source_chars, archived_chars: omitted }
+    SnapResult {
+        frames,
+        head,
+        tail,
+        source_chars,
+        archived_chars: omitted,
+    }
 }
 
 fn clamp_boundary(s: &str, i: usize) -> usize {
@@ -269,7 +303,10 @@ fn glyph_bits(ch: char) -> [u8; 8] {
     if ch.is_ascii_graphic() || ch == ' ' {
         font8x8::BASIC_FONTS.get(ch).unwrap_or(FALLBACK)
     } else {
-        font8x8::BASIC_FONTS.get('·').or_else(|| font8x8::BASIC_FONTS.get('?')).unwrap_or(FALLBACK)
+        font8x8::BASIC_FONTS
+            .get('·')
+            .or_else(|| font8x8::BASIC_FONTS.get('?'))
+            .unwrap_or(FALLBACK)
     }
 }
 
@@ -278,12 +315,24 @@ pub fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(TABLE[(n >> 18) as usize & 63] as char);
         out.push(TABLE[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -308,16 +357,35 @@ mod tests {
 
     #[test]
     fn splits_long_text_into_multiple_frames() {
-        let cfg = SnapConfig { cols: 40, rows: 5, head_chars: 0, tail_chars: 0, scale: 1 };
-        let text = (0..40).map(|i| format!("row-{i:02} {}", "x".repeat(30))).collect::<Vec<_>>().join("\n");
+        let cfg = SnapConfig {
+            cols: 40,
+            rows: 5,
+            head_chars: 0,
+            tail_chars: 0,
+            scale: 1,
+        };
+        let text = (0..40)
+            .map(|i| format!("row-{i:02} {}", "x".repeat(30)))
+            .collect::<Vec<_>>()
+            .join("\n");
         let r = render_frames(&text, "bench", &cfg);
-        assert!(r.frames.len() >= 2, "expected multiple frames, got {}", r.frames.len());
+        assert!(
+            r.frames.len() >= 2,
+            "expected multiple frames, got {}",
+            r.frames.len()
+        );
         assert!(r.frames.iter().all(|f| f.width > 0 && f.height > 0));
     }
 
     #[test]
     fn keeps_head_and_tail() {
-        let cfg = SnapConfig { cols: 80, rows: 10, head_chars: 20, tail_chars: 10, scale: 1 };
+        let cfg = SnapConfig {
+            cols: 80,
+            rows: 10,
+            head_chars: 20,
+            tail_chars: 10,
+            scale: 1,
+        };
         let text = "H".repeat(20) + &"M".repeat(500) + &"T".repeat(10);
         let r = render_frames(&text, "t", &cfg);
         assert!(r.head.starts_with("HHHH"));
@@ -338,13 +406,18 @@ mod tests {
 
     fn base64_decode(s: &str) -> Vec<u8> {
         let mut table = [255u8; 256];
-        for (i, c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().enumerate() {
+        for (i, c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            .iter()
+            .enumerate()
+        {
             table[*c as usize] = i as u8;
         }
         let bytes: Vec<u8> = s.bytes().filter(|b| table[*b as usize] != 255).collect();
         let mut out = Vec::new();
         for chunk in bytes.chunks(4) {
-            let n = chunk.iter().fold(0u32, |acc, c| (acc << 6) | table[*c as usize] as u32);
+            let n = chunk
+                .iter()
+                .fold(0u32, |acc, c| (acc << 6) | table[*c as usize] as u32);
             out.push((n >> 16) as u8);
             if chunk.len() > 2 {
                 out.push((n >> 8) as u8);

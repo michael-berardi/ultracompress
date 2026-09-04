@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Recall-quality benchmark: after Rapid Compact compaction, can the model
+ * Recall-quality benchmark: after UltraCompress compaction, can the model
  * still recover facts from the compacted-away history? We sample real tool
  * results from pre-cut turns, derive rare-term queries from them, and
- * measure whether rc_recall returns the exact source entry in top-k.
+ * measure whether ultracompress_recall returns the exact source entry in top-k.
  *
  * Stock Pi comparator: 0% by construction — compaction destroys the history
  * and there is no recall mechanism.
  *
- * Usage: node scripts/bench-recall.mjs [--rc path] [--k 5] [--samples 12]
+ * Usage: node scripts/bench-recall.mjs [--bin path] [--k 5] [--samples 12]
  */
 
 import { execFileSync } from "node:child_process";
@@ -24,13 +24,13 @@ const argOf = (name, dflt) => {
   const i = args.indexOf(name);
   return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
 };
-const RC = argOf("--rc", path.join(repo, "target", "release", "rc"));
+const ULTRACOMPRESS = argOf("--bin", path.join(repo, "target", "release", "ultracompress"));
 const K = parseInt(argOf("--k", "5"), 10);
 const SAMPLES = parseInt(argOf("--samples", "12"), 10);
 const MIN_MESSAGES = 40;
 
-const rc = (args_, stdin) =>
-  JSON.parse(execFileSync(RC, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }));
+const ultracompress = (args_, stdin) =>
+  JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }));
 
 function* sessionFiles() {
   const root = path.join(os.homedir(), ".pi", "agent", "sessions");
@@ -85,7 +85,7 @@ for (const file of sessionFiles()) {
   // Compact this session with rc.
   let compacted;
   try {
-    compacted = rc(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], { entries });
+    compacted = ultracompress(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], { entries });
   } catch { continue; }
 
   // Sample pre-cut tool results (the compacted-away span).
@@ -111,7 +111,7 @@ for (const file of sessionFiles()) {
     if (!q.trim()) continue;
     let res;
     try {
-      res = rc(["recall", "--session", file, "--query", q, "--per-page", String(K)]);
+      res = ultracompress(["recall", "--session", file, "--query", q, "--per-page", String(K)]);
     } catch { continue; }
     totalSamples++;
     sN++;
@@ -125,7 +125,7 @@ for (const file of sessionFiles()) {
   }
 }
 
-console.log(`\nRecall quality after Rapid Compact compaction (top-${K}, real sessions)\n`);
+console.log(`\nRecall quality after UltraCompress compaction (top-${K}, real sessions)\n`);
 for (const p of perSession) {
   console.log(
     p.file.padEnd(20),

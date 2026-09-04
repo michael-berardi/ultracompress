@@ -1,7 +1,7 @@
 //! Brief transcript: chronological conversation flow with tool calls
 //! collapsed to one-liners and (#N) references, in a rolling window.
 
-use crate::model::{Block, RcMessage, truncate_chars};
+use crate::model::{truncate_chars, Block, RcMessage};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TranscriptLine {
@@ -28,7 +28,11 @@ pub struct TranscriptConfig {
 
 impl Default for TranscriptConfig {
     fn default() -> Self {
-        TranscriptConfig { max_lines: 120, max_line_chars: 220, tool_result_chars: 160 }
+        TranscriptConfig {
+            max_lines: 120,
+            max_line_chars: 220,
+            tool_result_chars: 160,
+        }
     }
 }
 
@@ -65,11 +69,18 @@ pub fn build(messages: &[RcMessage], cfg: &TranscriptConfig) -> Transcript {
                             if !t.is_empty() {
                                 entries.push(Entry {
                                     reference: String::new(),
-                                    line: format!("[assistant] {}", truncate_chars(t, cfg.max_line_chars)),
+                                    line: format!(
+                                        "[assistant] {}",
+                                        truncate_chars(t, cfg.max_line_chars)
+                                    ),
                                 });
                             }
                         }
-                        Block::ToolCall { id, name, arguments } => {
+                        Block::ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => {
                             ref_counter += 1;
                             let reference = format!("#{ref_counter}");
                             if !id.is_empty() {
@@ -91,7 +102,13 @@ pub fn build(messages: &[RcMessage], cfg: &TranscriptConfig) -> Transcript {
             }
             crate::model::Role::ToolResult => {
                 for b in &m.content {
-                    if let Block::ToolResult { tool_call_id, tool_name, text, is_error } = b {
+                    if let Block::ToolResult {
+                        tool_call_id,
+                        tool_name,
+                        text,
+                        is_error,
+                    } = b
+                    {
                         let reference = call_refs.get(tool_call_id).cloned().unwrap_or_default();
                         if reference.is_empty() {
                             ref_counter += 1;
@@ -100,7 +117,11 @@ pub fn build(messages: &[RcMessage], cfg: &TranscriptConfig) -> Transcript {
                                 reference: reference.clone(),
                                 line: format!(
                                     "* {} result ({}) {}",
-                                    if tool_name.is_empty() { "tool" } else { tool_name },
+                                    if tool_name.is_empty() {
+                                        "tool"
+                                    } else {
+                                        tool_name
+                                    },
                                     reference,
                                     result_digest(text, *is_error, cfg.tool_result_chars)
                                 ),
@@ -124,9 +145,16 @@ pub fn build(messages: &[RcMessage], cfg: &TranscriptConfig) -> Transcript {
     let lines = entries
         .into_iter()
         .skip(omitted)
-        .map(|e| TranscriptLine { reference: e.reference, line: e.line })
+        .map(|e| TranscriptLine {
+            reference: e.reference,
+            line: e.line,
+        })
         .collect();
-    Transcript { lines, omitted_lines: omitted, total_lines }
+    Transcript {
+        lines,
+        omitted_lines: omitted,
+        total_lines,
+    }
 }
 
 fn collect_text(content: &[Block]) -> String {
@@ -184,7 +212,9 @@ mod tests {
             RcMessage {
                 id: "1".into(),
                 role: crate::model::Role::User,
-                content: vec![Block::Text { text: "run the tests".into() }],
+                content: vec![Block::Text {
+                    text: "run the tests".into(),
+                }],
                 timestamp: None,
             },
             RcMessage {
@@ -210,7 +240,12 @@ mod tests {
             },
         ];
         let t = build(&msgs, &TranscriptConfig::default());
-        let joined: String = t.lines.iter().map(|l| l.line.as_str()).collect::<Vec<_>>().join("\n");
+        let joined: String = t
+            .lines
+            .iter()
+            .map(|l| l.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(joined.contains("[user] run the tests"));
         assert!(joined.contains("* bash \"cargo test\" (#1)"));
         assert!(joined.contains("→ test result: ok. 42 passed"));
@@ -218,12 +253,17 @@ mod tests {
 
     #[test]
     fn rolling_window_keeps_recent() {
-        let cfg = TranscriptConfig { max_lines: 3, ..Default::default() };
+        let cfg = TranscriptConfig {
+            max_lines: 3,
+            ..Default::default()
+        };
         let msgs: Vec<RcMessage> = (0..10)
             .map(|i| RcMessage {
                 id: format!("u{i}"),
                 role: crate::model::Role::User,
-                content: vec![Block::Text { text: format!("message {i}") }],
+                content: vec![Block::Text {
+                    text: format!("message {i}"),
+                }],
                 timestamp: None,
             })
             .collect();
