@@ -146,21 +146,34 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
             match engine {
                 crate::classify::Engine::Uc => {
                     if let Some(packet) = uc.encode_json(text) {
-                        let before = crate::estimate::tokens_from_chars(text.len(), cpt);
-                        let stub = format!(
-                            "[UC packet: JSON payload, {} → {} tokens, -{:.0}%; decode via ultracompress_uc decode]",
-                            packet.source_chars, packet.tokens_uc, packet.savings_pct
-                        );
+                        let before = packet.tokens_source;
+                        let stub = if packet.envelope {
+                            format!(
+                                "[UC packet: text payload in JSON envelope (key \"t\"), {} → {} o200k tokens (packet only), -{:.0}%; decode via ultracompress_uc decode, then use the \"t\" value]",
+                                packet.tokens_source, packet.tokens_uc, packet.savings_pct
+                            )
+                        } else {
+                            format!(
+                                "[UC packet: JSON payload, {} → {} o200k tokens (packet only), -{:.0}%; decode via ultracompress_uc decode]",
+                                packet.tokens_source, packet.tokens_uc, packet.savings_pct
+                            )
+                        };
+                        let Some(after) = uc.count_tokens(&format!("{stub}\n\n{}", packet.packet))
+                        else {
+                            continue;
+                        };
+                        if after >= before {
+                            continue;
+                        }
                         tokens_before += before;
-                        tokens_after +=
-                            crate::estimate::tokens_from_chars(stub.len(), cpt) + packet.tokens_uc;
+                        tokens_after += after;
                         ops.push(TransformOp::Uc {
                             message_index: mi,
                             block_index: bi,
                             stub,
                             packet: packet.packet.clone(),
                             tokens_before: before,
-                            tokens_after: packet.tokens_uc,
+                            tokens_after: after,
                         });
                     }
                 }

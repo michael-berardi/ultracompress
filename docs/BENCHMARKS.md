@@ -47,8 +47,8 @@ every byte recoverable and spending zero API cost. The differentiators:
 |---|---|---|---|
 | Summary generation | LLM call (seconds, $$, non-deterministic, can hallucinate) | deterministic, 10–30 ms | deterministic, 10–300 ms |
 | Compaction API cost | 1 LLM call per compaction | **$0** | **$0** |
-| History after compaction | **destroyed** | lossless recall | lossless recall |
-| Facts recoverable | 0% | 94.4% | **94.4%** |
+| Raw history after compaction | retained in session files | retained, ranked recall | retained, ranked recall |
+| Recall hit@5 in this fixture | not measured | 94.4% | **94.4%** |
 | JSON payloads in context | verbatim | verbatim | UC packets (−26%+ tokens, lossless) |
 | Bulky text tool output | verbatim every turn | verbatim every turn | snap frames (vision providers) |
 | Repeat compactions | degrade (summary of summary) | stable (sticky sections) | stable (sticky sections + key facts) |
@@ -59,11 +59,12 @@ every byte recoverable and spending zero API cost. The differentiators:
 
 | metric | UltraCompress | stock Pi |
 |---|---|---|
-| hit@1 | 66.7% | **0%** — history is destroyed |
-| hit@5 | **94.4%** | 0% |
+| hit@1 | 66.7% | not measured |
+| hit@5 | **94.4%** | not measured |
 
-Stock Pi has no recall mechanism; everything summarized is gone. Rapid
-Compact keeps the raw session on disk and searches it in ~10 ms.
+UltraCompress supplies ranked recall over retained session records, measured
+here at roughly 10 ms. The retrieval fixture measures UltraCompress's hit rate;
+stock Pi's retrieval accuracy is outside its scope.
 
 ## 3. Live — identical task, three stacks
 

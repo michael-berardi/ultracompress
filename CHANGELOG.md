@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.2 — reference-aware retrieval and measured token accounting
+
+- Plain-text envelopes now require `UC_TEXT_ENVELOPES=1` from a
+  reference-aware caller. Older extensions retain their previous JSON-only
+  behavior; non-winning JSON is never retried as an envelope.
+- Measure original text and the complete emitted packet plus stub with
+  o200k before accepting a live transform. Labels no longer describe byte
+  counts as tokens. These are tokenizer measurements, not provider billing
+  or end-to-end savings after retrieval.
+- Dense packets are not embedded in compaction summaries for models to
+  transcribe. Archive notes direct readers to the original raw history via
+  recall and explicitly say when no packet is present.
+- The standalone Pi adapter and Steak Pi 0.3.5 retrieve archived live output
+  by a bounded session-local reference and exempt decode/recall tool results
+  from recompression. Provider image payloads are no longer rewritten.
+- The standalone adapter is version-aligned at 0.1.2 and tested against Pi
+  0.85.1. README savings and raw-history claims distinguish measured fixture
+  results from general guarantees.
+
 ## 0.1.0 — initial release
 
 - VCC engine: deterministic section briefs (goal, files & changes, commits,

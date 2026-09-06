@@ -306,18 +306,26 @@ fn main_uc(args: &[String]) {
     let mode = args.first().map(|s| s.as_str()).unwrap_or("decode");
     let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
     // Accept either { "packet": "..." } JSON or raw packet text on stdin.
-    let payload: String = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(v) if v.get("packet").and_then(|p| p.as_str()).is_some() => {
-            v.get("packet").unwrap().as_str().unwrap().to_string()
-        }
-        _ => String::from_utf8_lossy(&bytes).to_string(),
-    };
+    let input = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+    let payload = input
+        .as_ref()
+        .and_then(|v| v.get("packet"))
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| String::from_utf8_lossy(&bytes).to_string());
+    // Match the encoder's configured binary instead of silently using another PATH entry.
+    let uc_bin = input
+        .as_ref()
+        .and_then(|v| v.get("ucBin"))
+        .and_then(|v| v.as_str())
+        .filter(|bin| !bin.is_empty())
+        .unwrap_or("uc");
     let sub = match mode {
         "encode" | "decode" => mode,
         other => die(&format!("unknown uc mode '{other}' (encode|decode)")),
     };
     use std::io::Write;
-    let mut child = std::process::Command::new("uc")
+    let mut child = std::process::Command::new(uc_bin)
         .arg(sub)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -335,7 +343,12 @@ fn main_uc(args: &[String]) {
         .unwrap_or_else(|e| die(&e.to_string()));
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        println!("{}", json!({ "error": err.trim() }));
+        let hint = if sub == "decode" {
+            " Use the uc:<hash> reference if available, or recover the original with ultracompress_recall. Do not abbreviate or reconstruct a packet, and do not retry the same invalid text."
+        } else {
+            ""
+        };
+        println!("{}", json!({ "error": format!("{}{hint}", err.trim()) }));
         return;
     }
     println!(

@@ -4,7 +4,7 @@ Issues and focused pull requests are welcome.
 
 ## Development
 
-Requirements: Rust 1.85+, Node.js 22+, and Pi 0.85+ for extension smoke tests.
+Requirements: Rust 1.85+, Node.js 22.19+, and Pi 0.85.x for extension smoke tests.
 UltraCompact is optional.
 
 ```bash

@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runUltraCompress } from "./src/bridge";
+import { UcReferences } from "./src/references";
 import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
 import { buildSnap, listSnaps, writeSnap } from "./src/snapshot";
-import { adaptPayloadForZai, payloadHasDataUrlImages } from "./src/payload";
 import {
   applyTransforms,
   cacheKey,
@@ -44,6 +44,11 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();
   const ultracompressBin = resolveUltraCompressBin(settings);
   const transformCache = new Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>();
+  const references = new UcReferences();
+  pi.on("session_start", () => {
+    references.clear();
+    transformCache.clear();
+  });
   let lastCalibratedCpt: number | undefined;
   let visionKnown: boolean | null = null;
 
@@ -72,22 +77,6 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     return undefined;
   });
 
-  // Snap-frame wire-format adapter: z.ai's coding endpoint expects image
-  // payloads as `file` parts, not OpenAI `image_url` parts. Rewrite in place;
-  // other providers are untouched. If frames ever get rejected despite this,
-  // the agent_end handler below disables them for the rest of the session.
-  pi.on("before_provider_request", (event, ctx) => {
-    try {
-      const model = ctx?.model as { provider?: string; baseUrl?: string } | undefined;
-      const isZai = model?.provider === "zai" || String(model?.baseUrl ?? "").includes("z.ai");
-      if (!isZai) return undefined;
-      if (!payloadHasDataUrlImages(event.payload as { messages?: Array<{ content?: unknown }> })) return undefined;
-      const n = adaptPayloadForZai(event.payload as { messages?: Array<{ content?: unknown }> });
-      if (n > 0) dbg({ zaiFilePartsConverted: n });
-    } catch {}
-    return undefined;
-  });
-
   // ── Live transforms ────────────────────────────────────────────────────
   pi.on("context", async (event, ctx) => {
     if (!settings.snap.enabled && !settings.uc.enabled) return undefined;
@@ -103,7 +92,19 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     }
     const minChars = Math.min(settings.uc.minChars, settings.snap.minChars);
     const messages = event.messages as unknown as AgentLikeMessage[];
-    const candidates = collectCandidates(messages, minChars, keyFor);
+    // Reuse keys only within this request: repeated text and the apply pass need
+    // no second serialization/hash. Keep candidate occurrences (and their order)
+    // intact, and recompute with current settings/calibration on the next request.
+    const requestKeys = new Map<string, string>();
+    const requestKeyFor = (text: string): string => {
+      let key = requestKeys.get(text);
+      if (key === undefined) {
+        key = keyFor(text);
+        requestKeys.set(text, key);
+      }
+      return key;
+    };
+    const candidates = collectCandidates(messages, minChars, requestKeyFor);
     const fresh = candidates.filter((c) => !transformCache.has(c.key));
     if (fresh.length > 0) {
       // Batch-compute transforms for unseen blocks in one UltraCompress call. Synthetic
@@ -167,13 +168,31 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
     if (transformCache.size === 0) return undefined;
 
+    // Rehydrate references from original context even after bounded-cache eviction.
+    for (const candidate of candidates) {
+      const entry = transformCache.get(candidate.key);
+      if (entry?.op.op === "uc") {
+        const reference = references.put(candidate.text);
+        if (reference) entry.op.reference = reference;
+        else transformCache.delete(candidate.key); // too large: preserve stock text
+      }
+    }
+
+    // A single request may exceed the reference budget. Never emit an evicted handle.
+    for (const candidate of candidates) {
+      const entry = transformCache.get(candidate.key);
+      if (entry?.op.op === "uc" && entry.op.reference && references.get(entry.op.reference) === undefined) {
+        transformCache.delete(candidate.key);
+      }
+    }
+
     const keyFn = (m: AgentLikeMessage, bi: number): string | undefined => {
       if (m.role !== "toolResult") return undefined;
       const content = m.content;
-      if (typeof content === "string") return content.length >= minChars ? keyFor(content) : undefined;
+      if (typeof content === "string") return content.length >= minChars ? requestKeyFor(content) : undefined;
       const block = content?.[bi] as { text?: unknown } | undefined;
       if (!block || typeof block.text !== "string") return undefined;
-      return block.text.length >= minChars ? keyFor(block.text) : undefined;
+      return block.text.length >= minChars ? requestKeyFor(block.text) : undefined;
     };
 
     const result = applyTransforms(messages, transformCache, keyFn, settings.snap.placement);
@@ -308,7 +327,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
       const lines = [
-        `ultracompress ${"0.1.0"}`,
+        `ultracompress ${"0.1.2"}`,
         `UltraCompress binary: ${ultracompressBin}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
         `uc: ${settings.uc.enabled ? "on" : "off"} (${settings.uc.bin}) · snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
@@ -382,28 +401,34 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     name: "ultracompress_uc",
     label: "UC Decode",
     description:
-      "Decode an UltraCompress UC packet back to exact JSON. UC packets appearing in context (marked " +
-      "'[UC packet…decode via ultracompress_uc decode]') are lossless compressed JSON; pass the packet text to recover " +
-      "the original payload verbatim.",
-    promptSnippet: "ultracompress_uc: decode a UC packet (lossless compressed JSON) back to exact JSON when its detail is needed.",
+      "Retrieve exact original tool output using the uc:<hash> reference printed in its archive marker. " +
+      "Pass that reference as packet; never reconstruct or abbreviate an encoded payload. " +
+      "Legacy complete @UC1 packets are also accepted and decode to JSON. " +
+      "Only legacy packets explicitly marked as envelopes wrap original text in the JSON key t.",
+    promptSnippet: "ultracompress_uc: retrieve original tool output by its uc:<hash> reference; legacy complete @UC1 packets also supported.",
     parameters: {
       type: "object",
       properties: {
-        packet: { type: "string", description: "The full UC packet text, starting with @UC1." },
+        packet: { type: "string", description: "The uc:<hash> reference from the archive marker (preferred), or a complete legacy @UC1 packet." },
       },
       required: ["packet"],
     },
     async execute(_id, params) {
       const packet = String(params.packet ?? "");
       if (!packet) return { content: [{ type: "text", text: "No packet provided." }], details: {} };
+      if (packet.startsWith("uc:")) {
+        const text = references.get(packet.trim());
+        return { content: [{ type: "text", text: text ??
+          "UC reference is unavailable in this session. Use ultracompress_recall or re-read the original source; do not invent a packet or retry this missing reference." }], details: {} };
+      }
       const res = await runUltraCompress<{ decoded?: string; error?: string }>(
-        ultracompressBin, ["uc", "decode"], { packet },
+        ultracompressBin, ["uc", "decode"], { packet, ucBin: settings.uc.bin },
       );
       if (!res.ok || !res.data) {
-        return { content: [{ type: "text", text: `UltraCompress UC decode failed: ${res.error}` }], details: {} };
+        return { content: [{ type: "text", text: `UltraCompress UC decode failed: ${res.error}. Use the uc:<hash> reference when available, or retrieve the original with ultracompress_recall. Do not retry an unchanged incomplete packet.` }], details: {} };
       }
       if (res.data.error) {
-        return { content: [{ type: "text", text: `decode error: ${res.data.error}` }], details: {} };
+        return { content: [{ type: "text", text: `decode error: ${res.data.error}. Use the uc:<hash> reference when available, or retrieve the original with ultracompress_recall. This error alone does not identify the cause; do not retry an unchanged incomplete packet.` }], details: {} };
       }
       return { content: [{ type: "text", text: res.data.decoded ?? "(empty)" }], details: {} };
     },

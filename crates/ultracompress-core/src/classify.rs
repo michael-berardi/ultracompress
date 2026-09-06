@@ -6,7 +6,8 @@
 pub enum ContentClass {
     /// Parseable JSON object/array — UC engine territory.
     Json,
-    /// Plain text — VCC transcript / snap-frame territory.
+    /// Plain text — VCC transcript / snap-frame territory; with UC available
+    /// it can also ship as an envelope packet (see route_tool_result).
     Text,
     /// Already an image or opaque payload — leave alone.
     Opaque,
@@ -81,6 +82,10 @@ pub fn route_tool_result(
         ContentClass::Text => {
             if vision_capable && text.len() >= th.snap_min_chars {
                 (Engine::Snap, class)
+            } else if uc_available && text.len() >= th.uc_min_chars {
+                // 0.1.1: the bridge wraps plain text in a {"t": …} envelope,
+                // so oversized text compresses even without vision.
+                (Engine::Uc, class)
             } else {
                 (Engine::None, class)
             }
@@ -113,7 +118,8 @@ mod tests {
         assert_eq!(route_tool_result(&json, true, true, &th).0, Engine::Uc);
         assert_eq!(route_tool_result(&json, false, true, &th).0, Engine::None);
         assert_eq!(route_tool_result(&text, true, true, &th).0, Engine::Snap);
-        assert_eq!(route_tool_result(&text, true, false, &th).0, Engine::None);
+        assert_eq!(route_tool_result(&text, true, false, &th).0, Engine::Uc);
+        assert_eq!(route_tool_result(&text, false, false, &th).0, Engine::None);
         assert_eq!(route_tool_result("tiny", true, true, &th).0, Engine::None);
     }
 }

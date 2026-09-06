@@ -289,7 +289,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ultracompress"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "ultracompress-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "font8x8",
  "png",

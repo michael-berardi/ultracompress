@@ -117,13 +117,14 @@ export function loadSettings(settingsPath = SETTINGS_PATH): UltraCompressSetting
   }
 }
 
-/** Resolve the UltraCompress binary: env → config → ~/.local/bin/ultracompress → ~/.cargo/bin/ultracompress → dev build → PATH. */
+/** Resolve the UltraCompress binary: env → config → UltraTerm-managed → local → dev → PATH. */
 export function resolveUltraCompressBin(settings: UltraCompressSettings, extensionDir = path.dirname(new URL(import.meta.url).pathname)): string {
   const candidates: string[] = [];
   if (process.env.ULTRACOMPRESS_BIN) candidates.push(process.env.ULTRACOMPRESS_BIN);
   if (settings.ultracompressBin) {
     candidates.push(settings.ultracompressBin.replace(/^~(?=\/|$)/, os.homedir()));
   }
+  candidates.push(path.join(os.homedir(), ".ultraterm", "bin", "ultracompress"));
   candidates.push(path.join(os.homedir(), ".local", "bin", "ultracompress"));
   candidates.push(path.join(os.homedir(), ".cargo", "bin", "ultracompress"));
   // src/ → extension/ → repo root

@@ -11,7 +11,17 @@ export function runUltraCompress<T>(bin: string, args: string[], stdinJson: unkn
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
+      // Opt into the shared UC telemetry sink so agent-side savings are
+      // counted in `uc telemetry` / `utp savings` (default state path).
+      child = spawn(bin, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          UC_TEXT_ENVELOPES: "1", // this extension can safely retrieve by reference
+          ...(process.env.UC_TELEMETRY === undefined && process.env.UC_TELEMETRY_PATH === undefined
+            ? { UC_TELEMETRY: "1" } : {}),
+        },
+      });
     } catch (err) {
       resolve({ ok: false, error: `spawn failed: ${String(err)}` });
       return;

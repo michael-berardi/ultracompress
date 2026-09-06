@@ -467,33 +467,42 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         }
     }
 
-    // UC inline selection: the most recent packet inlines as critical context
-    // when small enough; older ones become archive notes (recall/decode to
-    // recover). This is summary-appropriate: UC packets are model-readable text.
+    // Readable packets may inline. Dense packets require exact tool retrieval,
+    // not model transcription; archive notes direct the agent to raw history.
     let mut critical: Vec<String> = Vec::new();
     let mut uc_blocks = 0usize;
     let mut uc_tokens_saved: u64 = 0;
     if !uc_inline.is_empty() {
         let (_, last) = uc_inline.last().unwrap().clone();
-        if last.tokens_uc <= INLINE_UC_MAX_TOKENS {
+        if last.tokens_uc <= INLINE_UC_MAX_TOKENS && !last.packet.starts_with("@UC1 c=z") {
+            let kind = if last.envelope {
+                "text payload in JSON envelope (key \"t\")"
+            } else {
+                "JSON payload"
+            };
             critical.push(format!(
-                "[UC packet — most recent JSON payload ({} → {} tokens, -{:.0}%); decode via ultracompress_uc decode]",
-                human_chars(last.source_chars),
+                "[UC packet — most recent {kind} ({} → {} tokens, -{:.0}%); decode via ultracompress_uc decode]",
+                last.tokens_source,
                 last.tokens_uc,
                 last.savings_pct
             ));
             critical.push(last.packet.clone());
             uc_blocks += 1;
-            uc_tokens_saved += last.tokens_json.saturating_sub(last.tokens_uc);
+            // This is packet-only accounting; total compaction savings include notes/stubs.
+            uc_tokens_saved += last.tokens_source.saturating_sub(last.tokens_uc);
             uc_inline.pop();
         }
         for (_, p) in &uc_inline {
+            let kind = if p.envelope {
+                "text payload (envelope key \"t\")"
+            } else {
+                "JSON payload"
+            };
             uc_notes.push(format!(
-                "[ultracompress-archive uc: JSON payload, {}→{} tokens (-{:.0}%), decode via ultracompress_uc]",
-                p.tokens_json, p.tokens_uc, p.savings_pct
+                "[ultracompress-archive uc: {kind}, {}→{} tokens (-{:.0}% packet-only). Original is in raw session history: use ultracompress_recall. No packet is included in this note; do not reconstruct one.]",
+                p.tokens_source, p.tokens_uc, p.savings_pct
             ));
-            uc_blocks += 1;
-            uc_tokens_saved += p.tokens_json.saturating_sub(p.tokens_uc);
+            // No packet is shipped here: do not count hypothetical codec savings.
         }
     }
 
@@ -614,14 +623,6 @@ fn section_names(
         v.push("Transcript");
     }
     v.into_iter().map(String::from).collect()
-}
-
-fn human_chars(n: usize) -> String {
-    if n >= 1000 {
-        format!("{:.1}k", n as f64 / 1000.0)
-    } else {
-        format!("{n}")
-    }
 }
 
 #[cfg(test)]

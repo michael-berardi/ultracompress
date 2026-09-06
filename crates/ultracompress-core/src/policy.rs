@@ -3,8 +3,9 @@
 //! UltraCompress's core premise is that different content has different
 //! cheapest lossy-to-the-model-but-lossless-to-disk representation:
 //!
-//! - JSON payloads  → UC packets (deterministic, model-readable, ~26%+ fewer tokens)
-//! - Huge text      → snap frames (fixed vision-token cost, model-readable pixels)
+//! - JSON payloads  → UC packets when measured savings clear the margin
+//! - Huge text      → snap frames when vision allows; otherwise opted-in UC
+//!   envelopes, with plain text wrapped as {"t": …} for exact retrieval
 //! - Conversation   → VCC sections + brief transcript (deterministic text)
 //! - Recent turns   → kept verbatim (lossless tail)
 //!
@@ -103,15 +104,21 @@ pub fn resolve_block(
             }
         }
         ContentClass::Text => {
-            if !mix.snap || text.len() < th.snap_min_chars {
-                return Engine::None;
+            // Snap keeps priority when it is enabled and worthwhile (fixed,
+            // model-readable cost). Otherwise oversized text falls to UC:
+            // since 0.1.1 the bridge envelopes non-JSON text as {"t": …},
+            // and the bridge's never-worse check makes a failed attempt
+            // harmless (the block just stays verbatim).
+            if mix.snap && text.len() >= th.snap_min_chars {
+                let plan = crate::snap::plan_snap(text, snap_cfg, image_tokens_per_frame, cpt);
+                if plan.worthwhile {
+                    return Engine::Snap;
+                }
             }
-            let plan = crate::snap::plan_snap(text, snap_cfg, image_tokens_per_frame, cpt);
-            if plan.worthwhile {
-                Engine::Snap
-            } else {
-                Engine::None
+            if mix.uc && text.len() >= th.uc_min_chars {
+                return Engine::Uc;
             }
+            Engine::None
         }
     }
 }

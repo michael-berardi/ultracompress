@@ -1,120 +1,96 @@
-<div align="center">
+# UltraCompress
 
-# ⚡ UltraCompress
+Deterministic local compaction and raw-session recall for [Pi](https://pi.dev).
 
-**Deterministic local compaction for [Pi](https://github.com/badlogic/pi-mono). Lossless recall. $0 per compaction.**
-
-VCC briefs · snap frames · UC packets — one policy engine.
-
-*by Implose Cybernetics*
-
-</div>
-
----
-
-Your agent's context window is a budget. Every coding session burns it on
-7,000-line build logs, 200-record JSON dumps, and tool output nobody will
-ever read twice. Then compaction torches the evidence: an LLM summarizes
-your session, the summary hallucinates a little, the raw history is gone,
-and the next compaction summarizes the summary.
-
-**UltraCompress never calls an LLM to compact.** It compacts the way a
-compiler would: measure every representation, keep the cheapest one that's
-still faithful, and never throw away the original.
-
-```
-stock Pi:   160k billed tokens · LLM summary · history destroyed
-ultracompress:  152k billed tokens · $0 compaction · 94% of facts recoverable
-```
-
-## Three engines, one policy
-
-| Engine | What it owns | Why it wins |
-|---|---|---|
-| **VCC** | Conversation → structured brief | Deterministic sections (goal, files, commits, key facts, outstanding, preferences) + rolling transcript. Same input ⇒ byte-identical output. 10–300 ms. $0. |
-| **Snap** | Bulky tool output → PNG frames | Text rasterized into image frames the model still reads — fixed vision-token cost instead of per-character cost, with adaptive frame shapes tuned per payload. |
-| **UC** | JSON payloads → UC packets | [UltraCompact](#ultracompact-optional) lossless encoding, ~26%+ fewer tokens than minified JSON, model-readable, decode-exact. |
-
-The policy engine routes **each block** to its cheapest faithful
-representation and refuses any transform that doesn't beat plain text by a
-measured margin. Compaction never degrades: sticky sections accumulate
-across merges, volatile ones replace, key diagnostic facts (error codes,
-warnings) survive every pass.
-
-## Lossless by construction
-
-Every other compactor's story ends at the summary. UltraCompress's begins
-there: the raw session stays on disk and `ultracompress_recall` searches it — ranked,
-paged, ~10 ms — so compacted-away history stays reachable at **94.4%
-hit@5** (72 sampled facts across 9 real sessions; stock Pi: 0%, the history
-is gone). The model gets a `ultracompress_recall` tool and learns to use it before
-claiming it lost context.
-
-## Built for trust
-
-- **Deterministic** — same session + same config = byte-identical summary
-- **Never-worse** — a transform ships only when measured tokens say it wins
-- **Fallback-first** — any failure degrades to Pi core compaction;
-  UltraCompress cannot brick a session
-- **Zero API cost** — compaction is local computation; UC/snap shrink the
-  *live* context every turn, before compaction even triggers
-
-## Results
-
-Full methodology and every run in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
-
-| benchmark | stock Pi | pi-vcc | UltraCompress |
-|---|---|---|---|
-| Post-compaction context (12 real sessions) | ↓ 79.8% | ↓ 78.8% | ↓ 79.0% (at parity, $0) |
-| Facts recoverable after compaction | 0% | 94.4% | **94.4%** |
-| Compaction API cost | 1 LLM call each | $0 | **$0** |
-| Summary determinism | none | byte-exact | **byte-exact** |
-| JSON payload shrink | — | — | **−26%+ tokens** |
-| Live task observed cost vs OMP | — | — | **$0.0066 vs $0.0516** |
+UltraCompress builds structured conversation briefs without making an LLM
+request. It can also replace suitable tool output with image frames or optional
+UltraCompact encodings. Original session records remain available for recall.
 
 ## Install
 
-Requires the `ultracompress` binary (Rust ≥ 1.85):
+Release: **0.1.2**. Building from source requires Rust 1.85 or newer. The Pi
+adapter is tested with Pi 0.85.x and Node.js 22.19 or newer.
 
-```bash
-git clone https://github.com/michael-berardi/ultracompress
+```sh
+git clone --branch v0.1.2 https://github.com/michael-berardi/ultracompress
 cd ultracompress
-cargo build --release
+cargo build --locked --release
 mkdir -p ~/.local/bin
 cp target/release/ultracompress ~/.local/bin/
+pi install ./extension
 ```
 
-Then use as a Pi extension:
+The release also provides a Developer ID-signed, notarized macOS arm64 CLI
+archive and checksums. UltraTerm bundles the bridge with its managed Steak Pi
+runtime. Do not load the standalone extension alongside Steak Pi's copy.
 
-```bash
-pi -e /path/to/ultracompress/extension            # try it
-pi install /path/to/ultracompress/extension       # or install
-```
+[UltraCompact](https://github.com/michael-berardi/ultracompact) is an optional,
+separately distributed dependency: an available `uc` executable enables UC
+encoding. Without it, VCC compaction and raw-history recall still work. The
+adapter falls back to Pi's core compaction when the bridge is unavailable or
+fails.
 
-Optional — [UltraCompact](https://github.com/michael-berardi/ultracompact)
-(`uc` on PATH) unlocks the UC engine. UltraCompress is fully functional
-without it; when present, JSON payloads shrink automatically and
-losslessly. UC stays an optional accelerator, on by default, graceful when
-absent.
+## Representations and savings
 
-## Use
+| Representation | Purpose |
+| --- | --- |
+| VCC brief | Deterministic goal, file, decision, diagnostic, and transcript sections |
+| Snap frames | Rasterized tool text for supported vision-capable provider paths |
+| UC | Optional lossless encoding of JSON and opted-in plain-text envelopes |
 
-Automatic — UltraCompress takes over `/compact` and threshold compactions
-(`overrideDefaultCompaction: false` to send them back to Pi core).
+The engine measures candidate representations and leaves text unchanged when
+an available transform does not clear its margin. Readable-only UC often
+selects ordinary minified JSON for a single long string; zero additional savings
+in that case is expected. There is no guaranteed percentage improvement for an
+arbitrary input.
 
-| command | what it does |
-|---|---|
-| `/ultracompress` | compact now · `keep:N` · `policy:auto\|vcc\|snap\|uc` · optional follow-up prompt |
-| `/ultracompress-recall <query>` | search raw history (compacted turns included) · `scope:all` |
-| `/ultracompress-stats` | status, policy, cache, snapshots |
-| `/snaps` | pre-compaction snapshots (restorable) |
+The 0.1.2 adapter avoids asking the model to transcribe dense packets. It keeps
+a bounded, session-local original-text cache and puts a `uc:<hash>` retrieval
+reference in context instead. `ultracompress_uc` returns the exact original.
+Decoded and recalled results remain readable rather than being recompressed.
+The cache is limited to 256 entries / 32 MiB; unavailable references direct the
+agent to raw-session recall or the original source. Oversized entries stay as
+text. Complete legacy `@UC1` packets remain supported.
 
-Tools the model uses on its own: `ultracompress_recall` (search history),
-`ultracompress_uc` (decode a UC packet).
+**A retrieval reference is not a summary.** Reading its content adds those
+tokens back, plus the retrieval call. Engine encoding statistics are not
+provider-billed end-to-end savings. The bridge reports token counts rather than
+labeling character counts as tokens, and includes packet/stub overhead when
+comparing encodings.
 
-## Config
+Local compaction makes no LLM call; that stage has no model API charge. Model
+requests before and after compaction, image inputs, and retrieval still have
+their normal provider costs.
 
-`~/.pi/agent/ultracompress.json` — scaffolded with safe defaults on first run:
+## History and evidence
+
+UltraCompress's recall command searches the original session JSONL, including
+records omitted from the active context. Pi itself also retains session history;
+compaction does not imply that its on-disk records were destroyed.
+
+The recall benchmark reports **94.4% hit@5** across 72 sampled facts from nine
+sessions. It measures UltraCompress's retrieval accuracy; other systems' recall
+accuracy is outside that fixture's scope. Latency, task-cost, and JSON-size
+measurements are documented in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md); they are fixture-specific, not guaranteed
+product performance.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/ultracompress` | Compact now; accepts `keep:N` and `policy:auto\|vcc\|snap\|uc` |
+| `/ultracompress-recall <query>` | Search raw history; `scope:all` widens the search |
+| `/ultracompress-stats` | Show settings, policy, snapshots, and bridge status |
+| `/snaps` | Inspect pre-compaction snapshots |
+
+Agent tools: `ultracompress_recall` searches history;
+`ultracompress_uc` retrieves a reference or decodes a complete legacy packet.
+Never reconstruct, abbreviate, or repeatedly retry a damaged packet.
+
+## Configuration
+
+The adapter creates `~/.pi/agent/ultracompress.json` with safe defaults:
 
 ```json
 {
@@ -123,70 +99,53 @@ Tools the model uses on its own: `ultracompress_recall` (search history),
   "smartKeepTail": true,
   "keepUserTurns": null,
   "ultracompressBin": "",
-  "uc":  { "enabled": true, "bin": "uc", "minChars": 1200 },
-  "snap": { "enabled": true, "minChars": 6000, "placement": "nextUser",
-            "providers": ["anthropic", "google"] },
+  "uc": { "enabled": true, "bin": "uc", "minChars": 1200 },
+  "snap": {
+    "enabled": true,
+    "minChars": 6000,
+    "placement": "nextUser",
+    "providers": ["anthropic", "google"]
+  },
   "snapshot": { "enabled": true },
   "debug": false
 }
 ```
 
-Snap frames are provider-gated: they ship only where the wire format is
-proven. Everywhere else you get VCC + UC — still deterministic, still $0,
-still lossless.
+Set `overrideDefaultCompaction` to `false` to retain Pi's core compaction.
+Explicit bridge and UC executable overrides are respected. The adapter opts
+into plain-text envelopes with `UC_TEXT_ENVELOPES=1`; older callers keep their
+JSON-only behavior. Provider image payloads are not rewritten.
 
-Renaming from the pre-release project is automatic: an existing
-`~/.pi/agent/rapid-compact.json` is copied to `ultracompress.json`, and an
-installed `rc` binary remains a fallback. New commands, tools, settings, and
-installs use the UltraCompress name.
+UC aggregate accounting is local. An explicit `UC_TELEMETRY` or
+`UC_TELEMETRY_PATH` setting is preserved, including telemetry opt-out. No new
+on-disk original-payload cache is introduced by reference retrieval.
 
-## Architecture
+Existing `rapid-compact.json` settings and the legacy `rc` binary name remain
+migration fallbacks. New installations use the UltraCompress names.
 
-```
-┌────────────────────────────────────────────────────────────┐
-│ Pi extension (TS) — thin adapter: hooks, commands, tools   │
-│   session_before_compact ──┐                               │
-│   context (per LLM call) ──┤ spawn                         │
-│   before_provider_request ─┘                               │
-└────────────────────────────┬───────────────────────────────┘
-                             ▼ JSON in / JSON out
-┌────────────────────────────────────────────────────────────┐
-│ ultracompress (Rust) — the engine                           │
-│   load → normalize → classify → policy → route             │
-│     ├─ VCC: sections · transcript · merge · render         │
-│     ├─ Snap: adaptive layout → deterministic PNG frames    │
-│     ├─ UC: bridge to `uc encode --stats` (hash cache)      │
-│     └─ recall: ranked search over raw session JSONL        │
-└────────────────────────────────────────────────────────────┘
+## Development
+
+```sh
+cargo fmt --all -- --check
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
+cargo build --locked --release
+cd extension
+npm ci
+npm run typecheck
+npm test
 ```
 
-The engine is a standalone Rust crate — no Pi dependency. Point any harness
-at the same JSON contract.
+The Rust CLI is independent of Pi. Its JSON-in/JSON-out contract is usable by
+other harnesses. Offline benchmark scripts are under `scripts/`; live benchmark
+scripts make provider calls and are not required for ordinary unit testing.
 
-## Benchmarks
+## Related work and security
 
-Reproduce everything yourself:
+The VCC engine descends from [pi-vcc](https://github.com/sting8k/pi-vcc) and
+[VCC](https://github.com/lllyasviel/VCC). Snap frames adapt the image-frame
+compaction approach; optional UC encoding uses UltraCompact.
 
-```bash
-node scripts/bench-offline.mjs        # real sessions, zero API cost
-node scripts/bench-recall.mjs         # recall quality after compaction
-bash scripts/live-bench.sh all        # live: stock vs UltraCompress vs OMP
-node scripts/live-bench-report.mjs
-```
-
-## Related work
-
-- [VCC](https://github.com/lllyasviel/VCC) — the original
-  transcript-preserving conversation compiler
-- [pi-vcc](https://github.com/sting8k/pi-vcc) — the Pi extension that
-  proved deterministic compaction; UltraCompress's VCC engine descends from it
-- OMP Snap Compact — the image-frame compaction idea, reworked with
-  content-adaptive shapes and honest economics
-- [UltraCompact](https://github.com/michael-berardi/ultracompact) — the
-  lossless JSON token-minimizer behind the UC engine
-
-## Contributing, security, and license
-
-Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report
-security issues privately as described in [SECURITY.md](SECURITY.md).
-UltraCompress is released under the [MIT License](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
+[MIT License](LICENSE). Report security issues privately rather than including
+credentials or session records in public issues.

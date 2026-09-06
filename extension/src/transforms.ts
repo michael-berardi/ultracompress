@@ -13,6 +13,7 @@ export interface UcOp {
   block_index: number;
   stub: string;
   packet: string;
+  reference?: string;
   tokens_before: number;
   tokens_after: number;
 }
@@ -83,11 +84,17 @@ export interface Candidate {
   key: string;
 }
 
+/** Retrieval must stay readable, including failures; never archive it again. */
+export function isRetrievalResult(m: AgentLikeMessage): boolean {
+  return m.role === "toolResult" &&
+    (m.toolName === "ultracompress_uc" || m.toolName === "ultracompress_recall");
+}
+
 /** Find transform candidates: toolResult text blocks above the char floor. */
 export function collectCandidates(messages: AgentLikeMessage[], minChars: number, keyFn: (text: string) => string): Candidate[] {
   const out: Candidate[] = [];
   messages.forEach((m, messageIndex) => {
-    if (m.role !== "toolResult") return;
+    if (m.role !== "toolResult" || isRetrievalResult(m)) return;
     for (const { index: blockIndex, text } of textBlocks(m)) {
       if (text.length >= minChars) {
         out.push({ messageIndex, blockIndex, text, key: keyFn(text) });
@@ -102,7 +109,9 @@ export function ucReplacement(op: UcOp): Array<Record<string, unknown>> {
   return [
     {
       type: "text",
-      text: `${op.stub}\n\n${op.packet}`,
+      text: op.reference
+        ? `[UC archived output: call ultracompress_uc with packet="${op.reference}" for the exact original text. This is deferred retrieval, not a summary.]`
+        : `${op.stub}\n\n${op.packet}`,
     },
   ];
 }
@@ -159,7 +168,7 @@ export function applyTransforms(
   const pendingFrames: Array<{ userIndex: number; blocks: Array<Record<string, unknown>> }> = [];
 
   messages.forEach((m, mi) => {
-    if (m.role !== "toolResult" || typeof m.content === "string") return;
+    if (m.role !== "toolResult" || isRetrievalResult(m) || typeof m.content === "string") return;
     const content = m.content as Array<Record<string, unknown>>;
     for (let bi = 0; bi < content.length; bi++) {
       const key = keys(m, bi);

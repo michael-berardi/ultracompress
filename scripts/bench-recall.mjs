@@ -5,8 +5,8 @@
  * results from pre-cut turns, derive rare-term queries from them, and
  * measure whether ultracompress_recall returns the exact source entry in top-k.
  *
- * Stock Pi comparator: 0% by construction — compaction destroys the history
- * and there is no recall mechanism.
+ * Measures UltraCompress recall over retained session records. Other systems'
+ * retrieval accuracy is outside this fixture's scope.
  *
  * Usage: node scripts/bench-recall.mjs [--bin path] [--k 5] [--samples 12]
  */
@@ -138,4 +138,4 @@ console.log(
   `\nTOTAL  samples ${totalSamples} · hit@1 ${pct((hitAt1 / Math.max(1, totalSamples)) * 100)}` +
   ` · hit@${K} ${pct((hitAtK / Math.max(1, totalSamples)) * 100)}`,
 );
-console.log("Stock Pi comparator: 0% — compacted history is destroyed and unreachable.\n");
+console.log("This fixture measures UltraCompress recall only; no comparator recall was measured.\n");
