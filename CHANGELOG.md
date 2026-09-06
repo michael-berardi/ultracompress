@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 — explicit session scope and bounded recall
+
+- Recall uses the actual current branch tip; all-branch search stays inside one
+  selected session, and another session requires an explicit file path.
+- Role/tool and exclusive entry-range filters narrow search before ranking.
+- Bounded pages, UTF-8 excerpts and complete result JSON budgets; invalid
+  selectors fail closed instead of implicitly widening.
+- Fresh explicit reads are not archived before the model can first consume
+  them, avoiding an immediate archive/retrieve round trip. Older reads remain
+  eligible. No universal whole-session token saving is claimed.
+- CLI/tool/command propagation and synthetic branch, isolation, Unicode,
+  pagination and budget regression coverage.
+
 ## 0.1.2 — reference-aware retrieval and measured token accounting
 
 - Plain-text envelopes now require `UC_TEXT_ENVELOPES=1` from a

@@ -66,6 +66,7 @@ struct Cli {
     per_page: usize,
     image_tokens: Option<u64>,
     label: String,
+    recall: RecallOptions,
 }
 
 fn parse_cli(args: &[String]) -> Cli {
@@ -88,6 +89,7 @@ fn parse_cli(args: &[String]) -> Cli {
         per_page: 5,
         image_tokens: None,
         label: "text".into(),
+        recall: RecallOptions::default(),
     };
     let mut i = 0;
     while i < args.len() {
@@ -142,7 +144,25 @@ fn parse_cli(args: &[String]) -> Cli {
             }
             "--query" => c.query = Some(val(&mut i)),
             "--regex" => c.regex = true,
-            "--scope" => c.scope_all = val(&mut i) == "all",
+            "--scope" => {
+                c.scope_all = match val(&mut i).as_str() {
+                    "all" => true,
+                    "lineage" => false,
+                    _ => die("bad --scope (lineage|all; both are session-local)"),
+                }
+            }
+            "--leaf" => c.recall.leaf_id = Some(val(&mut i)),
+            "--role" => c.recall.role = Some(val(&mut i)),
+            "--tool-name" => c.recall.tool_name = Some(val(&mut i)),
+            "--after-entry" => c.recall.after_entry = Some(val(&mut i)),
+            "--before-entry" => c.recall.before_entry = Some(val(&mut i)),
+            "--snippet-bytes" => {
+                c.recall.snippet_bytes = val(&mut i).parse().unwrap_or_else(|_| die("bad number"))
+            }
+            "--max-output-bytes" => {
+                c.recall.max_output_bytes =
+                    val(&mut i).parse().unwrap_or_else(|_| die("bad number"))
+            }
             "--page" => c.page = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
             "--per-page" => c.per_page = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
             "--label" => c.label = val(&mut i),
@@ -294,6 +314,7 @@ fn main_recall(args: &[String]) {
         scope_all: cli.scope_all,
         page: cli.page,
         per_page: cli.per_page,
+        ..cli.recall
     };
     let result = search(&path, &opts).unwrap_or_else(|e| die(&e));
     println!(

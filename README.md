@@ -8,11 +8,11 @@ UltraCompact encodings. Original session records remain available for recall.
 
 ## Install
 
-Release: **0.1.2**. Building from source requires Rust 1.85 or newer. The Pi
+Release: **0.2.0**. Building from source requires Rust 1.85 or newer. The Pi
 adapter is tested with Pi 0.85.x and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.1.2 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.2.0 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -48,6 +48,10 @@ The 0.1.2 adapter avoids asking the model to transcribe dense packets. It keeps
 a bounded, session-local original-text cache and puts a `uc:<hash>` retrieval
 reference in context instead. `ultracompress_uc` returns the exact original.
 Decoded and recalled results remain readable rather than being recompressed.
+Fresh `read` results also remain readable for the first model request that
+consumes them: archiving a requested file and immediately retrieving it adds
+cost. Older reads can still be archived on subsequent requests. This avoids
+that immediate round trip, not a guarantee of lower total session cost.
 The cache is limited to 256 entries / 32 MiB; unavailable references direct the
 agent to raw-session recall or the original source. Oversized entries stay as
 text. Complete legacy `@UC1` packets remain supported.
@@ -64,9 +68,39 @@ their normal provider costs.
 
 ## History and evidence
 
-UltraCompress's recall command searches the original session JSONL, including
-records omitted from the active context. Pi itself also retains session history;
-compaction does not imply that its on-disk records were destroyed.
+UltraCompress's recall command searches **one explicitly selected session
+JSONL**, including records omitted from the active context. The Pi adapter
+passes the current session file and actual branch tip, so tree navigation and
+resume do not accidentally select the last-written sibling branch. No session
+archive scan or automatic widening occurs. Pi itself also retains session
+history; compaction does not imply that on-disk records were destroyed.
+
+- Default `scope:lineage`: the current path, including pre-compaction history.
+- `scope:all`: all branches of that same session, **not all sessions**.
+- `sessionFile`: explicitly select another session JSONL. For another file,
+  lineage starts at its last recorded entry; the current session's tip is not
+  reused. Missing files, broken lineage, and invalid selectors return errors.
+- `role`, `toolName`, `afterEntry`, `beforeEntry`: narrow before ranking. Entry
+  ranges are exclusive and refer to the selected scope's entry order.
+- `perPage` (default 5, maximum 20), `snippetBytes` (default 1000), and
+  `maxOutputBytes` (default 12000) bound output. These are UTF-8 **byte** budgets,
+  not token guarantees. The output budget covers complete result JSON, excluding
+  the host's tool-transport wrapper. Excerpts may shrink to fit; metadata that
+  cannot fit returns an error rather than silently dropping page members.
+  Pages beyond the available results return an error, not repeated final-page hits.
+
+Results include session identity, effective scope/tip, search count and entry
+IDs. Prefer a narrow query and small page before explicitly widening.
+
+```text
+/ultracompress-recall collision contract role:toolResult toolName:bash perPage:3
+/ultracompress-recall {"query":"release decision","sessionFile":"/path/other session.jsonl","scope":"all"}
+```
+
+The CLI requires `--session FILE`; use `--leaf ID` for an explicit tip,
+`--scope lineage|all`, `--role`, `--tool-name`, `--after-entry`, `--before-entry`,
+`--per-page`, `--snippet-bytes`, and `--max-output-bytes`. Regex is explicit via
+`--regex` / tool `regex:true`; the command also accepts `/pattern/`.
 
 The recall benchmark reports **94.4% hit@5** across 72 sampled facts from nine
 sessions. It measures UltraCompress's retrieval accuracy; other systems' recall
@@ -80,7 +114,7 @@ product performance.
 | Command | Purpose |
 | --- | --- |
 | `/ultracompress` | Compact now; accepts `keep:N` and `policy:auto\|vcc\|snap\|uc` |
-| `/ultracompress-recall <query>` | Search raw history; `scope:all` widens the search |
+| `/ultracompress-recall <query>` | Current lineage only; `scope:all` adds branches in the same session; JSON options support an explicit other session |
 | `/ultracompress-stats` | Show settings, policy, snapshots, and bridge status |
 | `/snaps` | Inspect pre-compaction snapshots |
 

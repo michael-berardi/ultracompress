@@ -49,7 +49,7 @@ describe("UC original-output references", () => {
   it("retrieves by short reference without copying or decoding dense text; clears on session replacement", async () => {
     const { handlers, tools } = register();
     vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: { ops: [{ ...op }] } });
-    const original = [{ role: "toolResult", toolName: "read", content: [{ type: "text", text }] }];
+    const original = [{ role: "toolResult", toolName: "bash", content: [{ type: "text", text }] }];
     const context = handlers.get("context")![1];
     const transformed = await context({ messages: structuredClone(original) }, { model: { provider: "zai" } });
     const marker = transformed.messages[0].content[0].text;

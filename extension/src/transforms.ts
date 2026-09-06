@@ -90,11 +90,19 @@ export function isRetrievalResult(m: AgentLikeMessage): boolean {
     (m.toolName === "ultracompress_uc" || m.toolName === "ultracompress_recall");
 }
 
-/** Find transform candidates: toolResult text blocks above the char floor. */
+function lastAssistantIndex(messages: AgentLikeMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "assistant") return i;
+  return -1;
+}
+
+/** Find transform candidates. Fresh explicit reads stay readable for their
+ * first model request; forcing immediate reference retrieval adds cost rather
+ * than saving it. Older reads remain eligible on subsequent requests. */
 export function collectCandidates(messages: AgentLikeMessage[], minChars: number, keyFn: (text: string) => string): Candidate[] {
   const out: Candidate[] = [];
+  const lastAssistant = lastAssistantIndex(messages);
   messages.forEach((m, messageIndex) => {
-    if (m.role !== "toolResult" || isRetrievalResult(m)) return;
+    if (m.role !== "toolResult" || isRetrievalResult(m) || (m.toolName === "read" && messageIndex > lastAssistant)) return;
     for (const { index: blockIndex, text } of textBlocks(m)) {
       if (text.length >= minChars) {
         out.push({ messageIndex, blockIndex, text, key: keyFn(text) });
@@ -167,8 +175,9 @@ export function applyTransforms(
   let snapApplied = 0;
   const pendingFrames: Array<{ userIndex: number; blocks: Array<Record<string, unknown>> }> = [];
 
+  const lastAssistant = lastAssistantIndex(messages);
   messages.forEach((m, mi) => {
-    if (m.role !== "toolResult" || isRetrievalResult(m) || typeof m.content === "string") return;
+    if (m.role !== "toolResult" || isRetrievalResult(m) || (m.toolName === "read" && mi > lastAssistant) || typeof m.content === "string") return;
     const content = m.content as Array<Record<string, unknown>>;
     for (let bi = 0; bi < content.length; bi++) {
       const key = keys(m, bi);

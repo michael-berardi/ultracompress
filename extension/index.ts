@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runUltraCompress } from "./src/bridge";
 import { UcReferences } from "./src/references";
+import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
 import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
 import { buildSnap, listSnaps, writeSnap } from "./src/snapshot";
 import {
@@ -294,32 +295,15 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ultracompress-recall", {
     description: "Search this session's raw history (compacted turns included)",
     handler: async (args, ctx) => {
-      const query = args?.trim();
-      if (!query) {
-        await ctx.ui.notify("usage: /ultracompress-recall <keywords | /regex/> [scope:all]", "info");
-        return;
+      try {
+        const params = parseRecallCommand(args?.trim() ?? "");
+        const argv = recallArgs(params, ctx.sessionManager);
+        const res = await runUltraCompress(ultracompressBin, argv, null);
+        if (!res.ok || !res.data) throw new Error(res.error ?? "No recall result");
+        await ctx.ui.notify(recallText(res.data, Number(params.maxOutputBytes ?? 12000)), "info");
+      } catch (error) {
+        await ctx.ui.notify(`UltraCompress recall: ${String(error)}`, "error");
       }
-      const sessionFile = ctx.sessionManager.getSessionFile();
-      if (!sessionFile) {
-        await ctx.ui.notify("No session file to search.", "warning");
-        return;
-      }
-      const scopeAll = /(?:^|\s)scope:all(?=\s|$)/.test(query);
-      const q = query.replace(/(?:^|\s)scope:all(?=\s|$)/, "").trim();
-      const res = await runUltraCompress(ultracompressBin, [
-        "recall", "--session", sessionFile, "--query", q,
-        ...(scopeAll ? ["--scope", "all"] : []), "--per-page", "8",
-      ], null);
-      if (!res.ok || !res.data) {
-        await ctx.ui.notify(`UltraCompress recall failed: ${res.error}`, "error");
-        return;
-      }
-      const r = res.data as { total: number; page: number; page_count: number; hits: Array<{ role: string; score: number; snippet: string; matched_terms: string[] }> };
-      const header = `${r.total} hit(s) · page ${r.page}/${r.page_count}`;
-      const body = r.hits
-        .map((h, i) => `${i + 1}. [${h.role}] ${h.snippet}`)
-        .join("\n\n");
-      await ctx.ui.notify(`${header}\n\n${body || "No hits."}`, "info");
     },
   });
 
@@ -327,7 +311,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
       const lines = [
-        `ultracompress ${"0.1.2"}`,
+        `ultracompress ${"0.2.0"}`,
         `UltraCompress binary: ${ultracompressBin}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
         `uc: ${settings.uc.enabled ? "on" : "off"} (${settings.uc.bin}) · snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
@@ -354,46 +338,27 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     name: "ultracompress_recall",
     label: "UltraCompress Recall",
     description:
-      "Recall earlier parts of this session — decisions, files, commands — including everything dropped by " +
-      "compaction. The raw history stays on disk and searchable: reach for this BEFORE telling the user you " +
-      "no longer have context. Plain keywords rank by relevance; a regex pattern also works. Results are paged.",
+      "Search raw pre-compaction history before claiming context is lost. Defaults to this session's current " +
+      "lineage only. scope:all includes sibling branches of that same session, never other sessions. " +
+      "Supply sessionFile explicitly for another session. Narrow by role, tool, entry range and bounded excerpts. " +
+      "Results identify the searched session, scope and message count; no automatic widening.",
     promptSnippet:
-      "ultracompress_recall: search this session's full raw history (compacted turns included) before saying context is lost. Plain keywords work best; scope:'all' widens the search.",
+      "ultracompress_recall: current session/current lineage by default; all = sibling branches only; another session requires explicit sessionFile. Use narrow filters and small pages.",
     parameters: {
       type: "object",
-      properties: {
-        query: { type: "string", description: "Keywords (e.g. 'redis cache decision') or a regex pattern." },
-        scope: { type: "string", enum: ["lineage", "all"], description: "Default 'lineage' = active conversation path. 'all' includes other branches (edited/retried turns)." },
-        page: { type: "number", description: "1-based page number. Default 1." },
-      },
+      properties: recallProperties,
       required: ["query"],
+      additionalProperties: false,
     },
     async execute(_id, params, _signal, _onUpdate, ctx) {
-      const sessionFile = ctx.sessionManager.getSessionFile();
-      if (!sessionFile) {
-        return { content: [{ type: "text", text: "No session file available to search." }], details: {} };
+      try {
+        const argv = recallArgs(params, ctx.sessionManager);
+        const res = await runUltraCompress(ultracompressBin, argv, null);
+        if (!res.ok || !res.data) throw new Error(res.error ?? "No recall result");
+        return { content: [{ type: "text", text: recallText(res.data, Number(params.maxOutputBytes ?? 12000)) }], details: {} };
+      } catch (error) {
+        return { content: [{ type: "text", text: `UltraCompress recall failed: ${String(error)}` }], details: {}, isError: true };
       }
-      const query = String(params.query ?? "");
-      const scopeAll = params.scope === "all";
-      const page = typeof params.page === "number" && params.page >= 1 ? Math.floor(params.page) : 1;
-      const res = await runUltraCompress(ultracompressBin, [
-        "recall", "--session", sessionFile, "--query", query,
-        ...(scopeAll ? ["--scope", "all"] : []), "--page", String(page),
-      ], null);
-      if (!res.ok || !res.data) {
-        return { content: [{ type: "text", text: `UltraCompress recall failed: ${res.error}` }], details: {} };
-      }
-      const r = res.data as { total: number; page: number; page_count: number; hits: Array<{ entry_id: string; role: string; score: number; snippet: string; matched_terms: string[] }> };
-      const lines = [
-        `${r.total} hit(s) · page ${r.page}/${r.page_count} · scope ${scopeAll ? "all" : "lineage"}`,
-        "",
-        ...r.hits.map(
-          (h, i) =>
-            `${i + 1}. [${h.role}] ${h.snippet}\n   (entry ${h.entry_id}, matched: ${h.matched_terms.join(", ")})`,
-        ),
-        ...(r.hits.length === 0 ? ["No hits. Try fewer or different keywords."] : []),
-      ];
-      return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
     },
   });
 

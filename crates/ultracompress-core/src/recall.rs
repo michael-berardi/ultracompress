@@ -1,36 +1,45 @@
-//! Lossless recall: ranked search over the raw session JSONL.
-//!
-//! Compaction frees the model's window; recall keeps history reachable.
-//! Multi-word queries OR-match and rank by relevance (rare terms weigh more);
-//! a regex pattern is accepted for power use. Scope can span the active
-//! lineage only (default) or all branches of the session file.
-
-use crate::load::load_session;
+//! Lossless, branch-aware search over raw session JSONL.
 use crate::model::{truncate_chars, Block};
+use crate::recall_load;
+use regex::Regex;
+use serde::Serialize;
 use std::collections::HashMap;
+use std::path::Path;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RecallOptions {
     pub query: String,
     pub regex: bool,
     pub scope_all: bool,
     pub page: usize,
     pub per_page: usize,
+    pub leaf_id: Option<String>,
+    pub role: Option<String>,
+    pub tool_name: Option<String>,
+    pub after_entry: Option<String>,
+    pub before_entry: Option<String>,
+    pub snippet_bytes: usize,
+    pub max_output_bytes: usize,
 }
-
 impl Default for RecallOptions {
     fn default() -> Self {
-        RecallOptions {
+        Self {
             query: String::new(),
             regex: false,
             scope_all: false,
             page: 1,
             per_page: 5,
+            leaf_id: None,
+            role: None,
+            tool_name: None,
+            after_entry: None,
+            before_entry: None,
+            snippet_bytes: 1000,
+            max_output_bytes: 12000,
         }
     }
 }
-
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RecallHit {
     pub entry_id: String,
     pub role: String,
@@ -39,8 +48,7 @@ pub struct RecallHit {
     pub timestamp: Option<u64>,
     pub matched_terms: Vec<String>,
 }
-
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RecallResult {
     pub query: String,
     pub hits: Vec<RecallHit>,
@@ -48,258 +56,279 @@ pub struct RecallResult {
     pub page: usize,
     pub page_count: usize,
     pub searched_messages: usize,
+    pub session_id: String,
+    pub scope: String,
+    pub leaf_id: Option<String>,
 }
 
 enum Matcher {
     Terms(Vec<String>),
-    Regex(regex::Regex),
+    Regex(Regex),
+}
+fn flat(m: &crate::model::RcMessage) -> String {
+    m.content
+        .iter()
+        .filter_map(|b| match b {
+            Block::Text { text } | Block::Thinking { text, .. } => Some(text.clone()),
+            Block::ToolResult {
+                tool_name, text, ..
+            } => Some(if tool_name.is_empty() {
+                text.clone()
+            } else {
+                format!("[{tool_name}] {text}")
+            }),
+            Block::ToolCall {
+                name, arguments, ..
+            } => Some(format!("[call {name}] {arguments}")),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn has_tool(m: &crate::model::RcMessage, n: &str) -> bool {
+    if !matches!(m.role, crate::model::Role::ToolResult) {
+        return false;
+    }
+    m.content.iter().any(|b| match b {
+        Block::ToolResult { tool_name, .. } => tool_name == n,
+        _ => false,
+    })
+}
+fn truncate_bytes(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    if max < 3 {
+        return String::new();
+    }
+    let mut end = max - 3;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
+}
+fn snippet(text: &str, pos: usize, max: usize) -> String {
+    let mut start = pos.min(text.len()).saturating_sub(max / 4);
+    while !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let prefix = if start > 0 { "…" } else { "" };
+    format!(
+        "{prefix}{}",
+        truncate_bytes(&text[start..], max - prefix.len())
+    )
+}
+// Lowercasing can expand Unicode (e.g. İ -> i + combining dot). Convert the
+// match offset back to original bytes before slicing the original evidence.
+fn original_offset(text: &str, folded_pos: usize) -> usize {
+    let mut offset = 0;
+    for (pos, ch) in text.char_indices() {
+        let next = offset + ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if folded_pos < next {
+            return pos;
+        }
+        offset = next;
+    }
+    text.len()
+}
+fn shrink(r: &mut RecallResult, budget: usize) -> Result<(), String> {
+    loop {
+        let n = serde_json::to_vec(r).map_err(|e| e.to_string())?.len();
+        if n <= budget {
+            return Ok(());
+        }
+        let mut changed = false;
+        for h in &mut r.hits {
+            if !h.snippet.is_empty() {
+                h.snippet = truncate_bytes(&h.snippet, h.snippet.len() * 3 / 4);
+                changed = true
+            }
+        }
+        if !changed {
+            return Err("max_output_bytes too small for result metadata".into());
+        }
+    }
 }
 
-// A tiny bundled regex engine would be overkill; we accept POSIX-ish patterns
-// via a minimal substring fallback when the `regex` crate is unavailable.
-// For v0 we include `regex` — recall quality is worth one dependency.
-mod regex_shim {
-    pub use regex::Regex;
-}
-
-use regex_shim::Regex;
-
-pub fn search(path: &std::path::Path, opts: &RecallOptions) -> Result<RecallResult, String> {
-    let full = load_session(path, true).map_err(|e| format!("cannot load session: {e}"))?;
-    let msgs = if opts.scope_all {
-        full.messages
+pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
+    if o.query.trim().is_empty() || o.query.chars().count() > 512 {
+        return Err("query must be 1..512 characters".into());
+    }
+    if !(1..=20).contains(&o.per_page) || !(1..=1_000_000).contains(&o.page) {
+        return Err("page and per_page must be within valid bounds".into());
+    }
+    if !(128..=4000).contains(&o.snippet_bytes) || !(1024..=32000).contains(&o.max_output_bytes) {
+        return Err("snippet_bytes or max_output_bytes out of bounds".into());
+    }
+    if o.role
+        .as_ref()
+        .is_some_and(|r| !["user", "assistant", "toolResult"].contains(&r.as_str()))
+    {
+        return Err("invalid role".into());
+    }
+    for value in [&o.tool_name, &o.after_entry, &o.before_entry]
+        .into_iter()
+        .flatten()
+    {
+        if value.is_empty() || value.chars().count() > 512 {
+            return Err("invalid recall filter".into());
+        }
+    }
+    if o.scope_all && o.leaf_id.is_some() {
+        return Err("explicit leaf is incompatible with scope_all".into());
+    }
+    let f = recall_load::load(path)?;
+    let (indices, leaf) = if o.scope_all {
+        recall_load::validate_all(&f)?;
+        ((0..f.entries.len()).collect(), None)
     } else {
-        // Active lineage: messages after the last compaction boundary were
-        // already handled by the loader when include_pre_compaction=false;
-        // for recall over lineage we want everything since the FIRST kept
-        // boundary of the active branch chain — approximated by the full
-        // active branch (the loader's path walk already follows the lineage).
-        full.messages
+        recall_load::lineage(&f, o.leaf_id.as_deref())?
     };
-
-    let matcher = if opts.regex {
-        Matcher::Regex(Regex::new(&opts.query).map_err(|e| format!("bad regex: {e}"))?)
+    let pos: HashMap<String, usize> = indices
+        .iter()
+        .enumerate()
+        .map(|(p, i)| (f.entries[*i].id.clone(), p))
+        .collect();
+    let lo = o
+        .after_entry
+        .as_ref()
+        .map(|x| {
+            pos.get(x)
+                .copied()
+                .ok_or_else(|| "after_entry not found in selected scope".to_string())
+        })
+        .transpose()?;
+    let hi = o
+        .before_entry
+        .as_ref()
+        .map(|x| {
+            pos.get(x)
+                .copied()
+                .ok_or_else(|| "before_entry not found in selected scope".to_string())
+        })
+        .transpose()?;
+    if let (Some(a), Some(b)) = (lo, hi) {
+        if a >= b {
+            return Err("invalid entry range".into());
+        }
+    }
+    let matcher = if o.regex {
+        Matcher::Regex(Regex::new(&o.query).map_err(|e| format!("bad regex: {e}"))?)
     } else {
         Matcher::Terms(
-            opts.query
+            o.query
                 .to_lowercase()
                 .split_whitespace()
-                .map(String::from)
+                .map(str::to_string)
                 .collect(),
         )
     };
-
-    // Document frequency for rarity weighting.
-    let mut texts: Vec<(String, String, String, Option<u64>, usize)> = Vec::new(); // (id, role, text, ts, hash)
-    for m in &msgs {
-        let text = flatten(m);
-        if text.is_empty() {
+    let mut rows = Vec::new();
+    for (p, i) in indices.iter().enumerate() {
+        if lo.is_some_and(|x| p <= x) || hi.is_some_and(|x| p >= x) {
             continue;
         }
-        texts.push((
-            m.id.clone(),
-            m.role.to_string(),
-            text,
-            m.timestamp,
-            hash_of(m),
-        ));
+        let e = &f.entries[*i];
+        let m = match &e.message {
+            Some(x) => x,
+            None => continue,
+        };
+        if o.role.as_ref().is_some_and(|x| x != &m.role.to_string())
+            || o.tool_name.as_ref().is_some_and(|x| !has_tool(m, x))
+        {
+            continue;
+        }
+        let t = flat(m);
+        if t.is_empty() {
+            continue;
+        }
+        rows.push((e.id.clone(), m.role.to_string(), t, m.timestamp));
     }
-    let searched = texts.len();
-    let mut df: HashMap<String, usize> = HashMap::new();
-    if let Matcher::Terms(terms) = &matcher {
-        for (_, _, text, _, _) in &texts {
-            let lower = text.to_lowercase();
-            for t in terms {
-                if lower.contains(t.as_str()) {
-                    *df.entry(t.clone()).or_default() += 1;
+    let searched = rows.len();
+    let mut df = HashMap::new();
+    if let Matcher::Terms(ts) = &matcher {
+        for (_, _, t, _) in &rows {
+            let l = t.to_lowercase();
+            for q in ts {
+                if l.contains(q) {
+                    *df.entry(q.clone()).or_insert(0) += 1
                 }
             }
         }
     }
-
-    let mut hits: Vec<RecallHit> = Vec::new();
-    for (id, role, text, ts, _) in &texts {
+    let mut hits = Vec::new();
+    for (id, role, t, stamp) in rows {
         match &matcher {
             Matcher::Regex(re) => {
-                if let Some(m) = re.find(text) {
+                if let Some(x) = re.find(&t) {
                     hits.push(RecallHit {
-                        entry_id: id.clone(),
-                        role: role.clone(),
-                        score: 1.0 + (m.as_str().len() as f64 / 100.0),
-                        snippet: snippet(text, m.start(), m.end()),
-                        timestamp: *ts,
-                        matched_terms: vec![truncate_chars(m.as_str(), 60)],
-                    });
+                        entry_id: id,
+                        role,
+                        score: 1.0,
+                        snippet: snippet(&t, x.start(), o.snippet_bytes),
+                        timestamp: stamp,
+                        matched_terms: vec![truncate_chars(x.as_str(), 60)],
+                    })
                 }
             }
-            Matcher::Terms(terms) => {
-                let lower = text.to_lowercase();
-                let mut score = 0.0;
-                let mut matched = Vec::new();
-                for t in terms {
-                    if lower.contains(t.as_str()) {
-                        let tf = lower.matches(t.as_str()).count();
-                        let idf = match df.get(t) {
-                            Some(n) if *n > 0 => (searched as f64 / *n as f64).ln().max(0.5),
-                            _ => 1.0,
-                        };
-                        score += (tf as f64).ln_1p() * idf;
-                        matched.push(t.clone());
+            Matcher::Terms(ts) => {
+                let l = t.to_lowercase();
+                let mut score = 0.;
+                let mut mt = Vec::new();
+                for q in ts {
+                    if l.contains(q) {
+                        let n = l.matches(q).count();
+                        let d = df.get(q).copied().unwrap_or(1);
+                        score += (n as f64).ln_1p() * (searched as f64 / d as f64).ln().max(0.5);
+                        mt.push(q.clone())
                     }
                 }
                 if score > 0.0 {
-                    let first_pos = terms
-                        .iter()
-                        .filter_map(|t| lower.find(t.as_str()))
-                        .min()
-                        .unwrap_or(0);
+                    let p =
+                        original_offset(&t, ts.iter().filter_map(|q| l.find(q)).min().unwrap_or(0));
                     hits.push(RecallHit {
-                        entry_id: id.clone(),
-                        role: role.clone(),
+                        entry_id: id,
+                        role,
                         score,
-                        snippet: snippet(text, first_pos, first_pos),
-                        timestamp: *ts,
-                        matched_terms: matched,
-                    });
+                        snippet: snippet(&t, p, o.snippet_bytes),
+                        timestamp: stamp,
+                        matched_terms: mt,
+                    })
                 }
             }
         }
     }
-
     hits.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     let total = hits.len();
-    let page_count = total.div_ceil(opts.per_page).max(1);
-    let page = opts.page.max(1).min(page_count);
-    let start = (page - 1) * opts.per_page;
-    let hits = hits.into_iter().skip(start).take(opts.per_page).collect();
-
-    Ok(RecallResult {
-        query: opts.query.clone(),
+    let pc = total.div_ceil(o.per_page).max(1);
+    if o.page > pc {
+        return Err("page exceeds available result pages".into());
+    }
+    let page = o.page;
+    let hits = hits
+        .into_iter()
+        .skip((page - 1) * o.per_page)
+        .take(o.per_page)
+        .collect();
+    let mut r = RecallResult {
+        query: o.query.clone(),
         hits,
         total,
         page,
-        page_count,
+        page_count: pc,
         searched_messages: searched,
-    })
-}
-
-fn flatten(m: &crate::model::RcMessage) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    for b in &m.content {
-        match b {
-            Block::Text { text } | Block::Thinking { text, .. } => parts.push(text.clone()),
-            Block::ToolResult {
-                tool_name, text, ..
-            } => {
-                if !tool_name.is_empty() {
-                    parts.push(format!("[{tool_name}]"));
-                }
-                parts.push(text.clone());
-            }
-            Block::ToolCall {
-                name, arguments, ..
-            } => {
-                parts.push(format!("[call {name}] {}", arguments));
-            }
-            _ => {}
-        }
-    }
-    parts.join("\n")
-}
-
-fn hash_of(m: &crate::model::RcMessage) -> usize {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    m.id.hash(&mut h);
-    h.finish() as usize
-}
-
-fn snippet(text: &str, start: usize, _end: usize) -> String {
-    let s = start.saturating_sub(80);
-    let s = char_floor(text, s);
-    let e = char_ceil(text, (start + 240).min(text.len()));
-    let mut out = String::from(if s > 0 { "…" } else { "" });
-    out.push_str(&text[s..e].replace('\n', " ⏎ "));
-    if e < text.len() {
-        out.push('…');
-    }
-    out
-}
-
-fn char_floor(s: &str, mut i: usize) -> usize {
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-fn char_ceil(s: &str, mut i: usize) -> usize {
-    while i < s.len() && !s.is_char_boundary(i) {
-        i += 1;
-    }
-    i
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    fn write_temp(name: &str, content: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("rc-recall-{name}-{}.jsonl", std::process::id()));
-        let mut f = std::fs::File::create(&p).unwrap();
-        f.write_all(content.as_bytes()).unwrap();
-        p
-    }
-
-    #[test]
-    fn ranks_rare_terms_higher() {
-        let p = write_temp(
-            "rarity",
-            r#"{"type":"session","id":"s","cwd":"/"}
-{"type":"message","id":"e1","message":{"role":"user","content":[{"type":"text","text":"the build failed with error xyzzy"}]}}
-{"type":"message","id":"e2","message":{"role":"assistant","content":[{"type":"text","text":"the the the ordinary"}]}}
-{"type":"message","id":"e3","message":{"role":"user","content":[{"type":"text","text":"xyzzy was the cause"}]}}
-"#,
-        );
-        let r = search(
-            &p,
-            &RecallOptions {
-                query: "xyzzy the".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert!(r.total >= 2);
-        // The hit matching the rare term should outrank the common-term hit.
-        assert!(
-            r.hits[0].snippet.contains("xyzzy")
-                || r.hits[0].matched_terms.contains(&"xyzzy".into())
-        );
-        std::fs::remove_file(&p).ok();
-    }
-
-    #[test]
-    fn regex_search_works() {
-        let p = write_temp(
-            "regex",
-            r#"{"type":"session","id":"s","cwd":"/"}
-{"type":"message","id":"e1","message":{"role":"user","content":[{"type":"text","text":"hook injection failed"}]}}
-"#,
-        );
-        let r = search(
-            &p,
-            &RecallOptions {
-                query: "hook|inject".into(),
-                regex: true,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(r.total, 1);
-        std::fs::remove_file(&p).ok();
-    }
+        session_id: f.session_id,
+        scope: if o.scope_all {
+            "all".into()
+        } else {
+            "lineage".into()
+        },
+        leaf_id: leaf,
+    };
+    shrink(&mut r, o.max_output_bytes)?;
+    Ok(r)
 }
