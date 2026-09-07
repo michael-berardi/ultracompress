@@ -3,7 +3,7 @@ import { runUltraCompress } from "./src/bridge";
 import { UcReferences } from "./src/references";
 import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
 import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
-import { buildSnap, listSnaps, writeSnap } from "./src/snapshot";
+import { listSnaps, writeSnapEntries } from "./src/snapshot";
 import {
   applyTransforms,
   cacheKey,
@@ -230,9 +230,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     if (settings.snapshot.enabled) {
       try {
         const entries = ctx.sessionManager.getEntries() ?? [];
-        const now = Date.now();
-        const { meta, payload } = buildSnap(entries, ev.reason ?? "unknown", now);
-        writeSnap(process.cwd(), payload, meta.file);
+        writeSnapEntries(process.cwd(), entries, ev.reason ?? "unknown", Date.now());
       } catch (error) {
         console.error("[ultracompress] snapshot failed:", error);
       }
@@ -311,7 +309,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
       const lines = [
-        `ultracompress ${"0.2.0"}`,
+        `ultracompress ${"0.2.1"}`,
         `UltraCompress binary: ${ultracompressBin}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
         `uc: ${settings.uc.enabled ? "on" : "off"} (${settings.uc.bin}) · snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,

@@ -1,6 +1,6 @@
 {
   "name": "ultracompress",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "UltraCompress — content-aware compaction for Pi: deterministic VCC briefs, snap frames for bulky tool output, optional UltraCompact (UC) packets, lossless recall. By Implose Cybernetics.",
   "license": "MIT",
   "type": "module",

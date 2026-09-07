@@ -1,5 +1,32 @@
 # Changelog
 
+## Extension 0.2.1 — streaming snapshots and stdin on oversized sessions
+
+- Pre-compaction snapshots are written by streaming JSON to disk entry by
+  entry (`writeSnapEntries`). Serializing the whole session with one
+  `JSON.stringify` threw `RangeError: Invalid string length` once the
+  payload crossed V8's ~512 MiB max string length, silently disabling the
+  safety net on very large sessions. A single entry beyond the limit is
+  replaced by a placeholder so the snap file stays valid JSON; partial
+  files are removed on failure.
+- Compaction stdin is streamed to the `uc` process leaf by leaf
+  (`streamJsonTo`) with the same root cause fixed; a failing serialization
+  still fails with the `stdin write failed:` prefix instead of crashing,
+  and an early child exit can no longer surface EPIPE as an unhandled
+  stdin error. Child stdout/stderr accumulation is capped so parse-side
+  string limits cannot be hit either.
+- The streamed stdin writer follows the JSON.stringify serialization
+  algorithm: toJSON invoked exactly once with the property key, property
+  values read lazily so hooks can mutate the parent, callable objects
+  honor their toJSON before omission rules, boxed Number/String/Boolean
+  (and subclasses) unbox via the prototype chain, Symbol.toStringTag
+  cannot spoof wrapper detection, bigints throw TypeError like native.
+- Regression coverage: payloads and snapshots beyond V8's max string
+  length round-trip byte-identically to `JSON.stringify` output, plus a
+  seeded differential fuzz against native JSON.stringify and adversarial
+  toJSON/mutation/wrapper/Symbol.toPrimitive cases.
+- `uc` binary unchanged at 0.2.0.
+
 ## 0.2.0 — explicit session scope and bounded recall
 
 - Recall uses the actual current branch tip; all-branch search stays inside one
