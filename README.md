@@ -8,11 +8,13 @@ UltraCompact encodings. Original session records remain available for recall.
 
 ## Install
 
-Release: **0.2.0**. Building from source requires Rust 1.85 or newer. The Pi
-adapter is tested with Pi 0.85.x and Node.js 22.19 or newer.
+Release: **0.2.1** — the Pi adapter ships streaming snapshots and stdin;
+the `uc` binary is unchanged at 0.2.0. Building from source requires Rust
+1.85 or newer. The Pi adapter is tested with Pi 0.85.x and Node.js 22.19
+or newer.
 
 ```sh
-git clone --branch v0.2.0 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.2.1 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
