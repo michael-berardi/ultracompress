@@ -50,6 +50,8 @@ export interface TransformResponse {
     uc_available: boolean;
   };
   ucStatus?: { available: boolean; version?: string };
+  /** Explicit successful no-gain decisions, never unavailable/failed encodes. */
+  no_gain?: Array<{ message_index: number; block_index: number }>;
 }
 
 /** Any content shape: string or block array. */
@@ -95,14 +97,14 @@ function lastAssistantIndex(messages: AgentLikeMessage[]): number {
   return -1;
 }
 
-/** Find transform candidates. Fresh explicit reads stay readable for their
- * first model request; forcing immediate reference retrieval adds cost rather
- * than saving it. Older reads remain eligible on subsequent requests. */
+/** Fresh tool results stay readable for their first model request. Archiving
+ * requested output before consumption forces an avoidable retrieval round trip.
+ * Historical results remain eligible; retrieval results are always readable. */
 export function collectCandidates(messages: AgentLikeMessage[], minChars: number, keyFn: (text: string) => string): Candidate[] {
   const out: Candidate[] = [];
   const lastAssistant = lastAssistantIndex(messages);
   messages.forEach((m, messageIndex) => {
-    if (m.role !== "toolResult" || isRetrievalResult(m) || (m.toolName === "read" && messageIndex > lastAssistant)) return;
+    if (m.role !== "toolResult" || isRetrievalResult(m) || messageIndex > lastAssistant) return;
     for (const { index: blockIndex, text } of textBlocks(m)) {
       if (text.length >= minChars) {
         out.push({ messageIndex, blockIndex, text, key: keyFn(text) });
@@ -177,7 +179,7 @@ export function applyTransforms(
 
   const lastAssistant = lastAssistantIndex(messages);
   messages.forEach((m, mi) => {
-    if (m.role !== "toolResult" || isRetrievalResult(m) || (m.toolName === "read" && mi > lastAssistant) || typeof m.content === "string") return;
+    if (m.role !== "toolResult" || isRetrievalResult(m) || mi > lastAssistant || typeof m.content === "string") return;
     const content = m.content as Array<Record<string, unknown>>;
     for (let bi = 0; bi < content.length; bi++) {
       const key = keys(m, bi);

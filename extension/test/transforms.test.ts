@@ -23,6 +23,7 @@ function sessionWithToolResult(text: string): AgentLikeMessage[] {
       role: "toolResult",
       content: [{ type: "text", text }],
     },
+    { role: "assistant", content: "consumed" },
   ];
 }
 
@@ -64,7 +65,7 @@ describe("collectCandidates", () => {
   });
 
   it("handles string content", () => {
-    const msgs = [{ role: "toolResult", content: "x".repeat(7000) }];
+    const msgs = [{ role: "toolResult", content: "x".repeat(7000) }, { role: "assistant", content: "consumed" }];
     const c = collectCandidates(msgs, 6000, (t) => t.slice(0, 8));
     expect(c).toHaveLength(1);
   });
@@ -113,6 +114,7 @@ describe("applyTransforms", () => {
     const msgs = [
       { role: "user", content: "run it" },
       { role: "toolResult", content: [{ type: "text", text: "x".repeat(7000) }] },
+      { role: "assistant", content: "consumed" },
     ];
     const key = "k3";
     applyTransforms(

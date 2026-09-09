@@ -36,6 +36,7 @@ const messages = (): AgentLikeMessage[] => [
   { role: "toolResult", content: [text(a)] },
   { role: "toolResult", content: a }, // Existing string-content behavior stays unchanged.
   { role: "user", content: [text("next"), image] },
+  { role: "assistant", content: [text("consumed")] },
 ];
 
 type Handler = (event: any, ctx: any) => any;
@@ -47,7 +48,11 @@ function register(settings: UltraCompressSettings, model = { provider: "anthropi
     registerCommand() {}, registerTool() {},
   } as never);
   return {
-    context: (input: AgentLikeMessage[]) => handlers.get("context")![1]({ messages: input }, { model }),
+    context: (input: AgentLikeMessage[], fresh = false) => handlers.get("context")![1]({
+      messages: fresh || input.some((m) => m.role === "assistant") ? input :
+        [...input, { role: "assistant", content: [text("consumed")] }],
+    }, { model }),
+    start: () => handlers.get("session_start")![0]({}, {}),
     compact: () => handlers.get("session_before_compact")![0]({}, {}),
   };
 }
@@ -76,8 +81,8 @@ describe("request-local live transform keys", () => {
     expect(vi.mocked(transforms.cacheKey).mock.calls.map((call) => call[1])).toEqual([a, b]);
     // Five candidate occurrences, four array blocks applied: baseline 9 hashes, now 2.
     const payload = vi.mocked(runUltraCompress).mock.calls[0][2] as any;
-    expect(payload.messages.map((m: any) => m.message.content[0].text)).toEqual([a, b, a, a, a]);
-    expect(payload.messages.map((m: any) => m.id)).toEqual(["rc1", "rc1", "rc1", "rc2", "rc3"]);
+    expect(payload.messages.map((m: any) => m.message.content[0].text)).toEqual([a, b]);
+    expect(payload.messages.map((m: any) => m.id)).toEqual(["rc1", "rc1"]);
     expect(JSON.stringify(result.messages)).toContain("uc:");
     expect(JSON.stringify(result.messages)).not.toContain("@UC1\\nexact-packet-bytes");
     expect(JSON.stringify(result.messages)).toContain("archive/frame-1, archive/frame-2");
@@ -122,23 +127,23 @@ describe("request-local live transform keys", () => {
     const input = () => [{ role: "toolResult", content: [text(a)] }];
     vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: { ops: [uc] } });
     await hooks.context(input());
-    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "auto", v: true, s: 6000, u: 1200, cpt: undefined }, a);
+    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "auto", v: true, s: 6000, u: 1200, snap: true, uc: true, bin: "uc", imageTokens: null, cpt: undefined }, a);
     const first = vi.mocked(transforms.cacheKey).mock.results[0].value;
     settings.policy = "uc";
     settings.uc.minChars = 1000;
     settings.snap.minChars = 5000;
     await hooks.context(input());
-    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "uc", v: true, s: 5000, u: 1000, cpt: undefined }, a);
+    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "uc", v: true, s: 5000, u: 1000, snap: true, uc: true, bin: "uc", imageTokens: null, cpt: undefined }, a);
     expect(vi.mocked(transforms.cacheKey).mock.results[1].value).not.toBe(first);
     vi.mocked(runUltraCompress).mockResolvedValueOnce({ ok: true, data: { stats: { calibrated: true, chars_per_token: 3.5 } } });
     await hooks.compact();
     await hooks.context(input());
-    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "uc", v: true, s: 5000, u: 1000, cpt: 3.5 }, a);
+    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "uc", v: true, s: 5000, u: 1000, snap: true, uc: true, bin: "uc", imageTokens: null, cpt: 3.5 }, a);
     expect(transforms.cacheKey).toHaveBeenCalledTimes(3);
     expect(runUltraCompress).toHaveBeenCalledTimes(4);
   });
 
-  it("preserves existing model vision gating and latch across requests", async () => {
+  it("re-evaluates model vision gating across requests", async () => {
     vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: { ops: [uc] } });
     const model = { provider: "anthropic", input: ["text", "image"] };
     const settings = structuredClone(DEFAULT_SETTINGS);
@@ -148,11 +153,48 @@ describe("request-local live transform keys", () => {
     const first = vi.mocked(transforms.cacheKey).mock.results[0].value;
     model.input = ["text"];
     await hooks.context(input());
-    expect(vi.mocked(transforms.cacheKey).mock.results[1].value).toBe(first); // Existing visionKnown latch.
+    expect(vi.mocked(transforms.cacheKey).mock.results[1].value).not.toBe(first);
     const other = register(settings, model);
     await other.context(input());
-    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "auto", v: false, s: 6000, u: 1200, cpt: undefined }, a);
+    expect(transforms.cacheKey).toHaveBeenLastCalledWith({ p: "auto", v: false, s: 6000, u: 1200, snap: true, uc: true, bin: "uc", imageTokens: null, cpt: undefined }, a);
     expect(vi.mocked(transforms.cacheKey).mock.results[2].value).not.toBe(first);
+    expect(runUltraCompress).toHaveBeenCalledTimes(3);
+  });
+
+  it("memoizes explicit no-gain decisions, clears on session start, and retries legacy/failure responses", async () => {
+    const hooks = register(structuredClone(DEFAULT_SETTINGS));
+    const input = () => [{ role: "toolResult", content: [text(a), text(a)] }];
+    vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: {
+      ops: [], no_gain: [{ message_index: 0, block_index: 0 }],
+    } });
+    for (let i = 0; i < 10; i++) expect(await hooks.context(input())).toBeUndefined();
+    expect(runUltraCompress).toHaveBeenCalledTimes(1);
+    hooks.start();
+    await hooks.context(input());
     expect(runUltraCompress).toHaveBeenCalledTimes(2);
+    hooks.start();
+    vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: { ops: [] } });
+    await hooks.context(input());
+    await hooks.context(input());
+    expect(runUltraCompress).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(["read", "bash", "grep", "ls", "custom_tool"])("preserves fresh %s output even after caching an identical historical result", async (toolName) => {
+    const hooks = register(structuredClone(DEFAULT_SETTINGS));
+    const input = () => [{ role: "toolResult", toolName, content: [text(a)] }];
+    vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: { ops: [uc] } });
+    expect(await hooks.context(input())).toBeDefined();
+    expect(await hooks.context(input(), true)).toBeUndefined();
+    expect(runUltraCompress).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels no-gain compaction rather than falling through to a paid core summary", async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.snapshot.enabled = false;
+    const hooks = register(settings);
+    vi.mocked(runUltraCompress).mockResolvedValue({ ok: true, data: {
+      stats: { tokens_before_est: 100, tokens_after_est: 101 },
+    } });
+    expect(await hooks.compact()).toEqual({ cancel: true });
   });
 });

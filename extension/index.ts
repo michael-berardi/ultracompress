@@ -46,9 +46,11 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const ultracompressBin = resolveUltraCompressBin(settings);
   const transformCache = new Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>();
   const references = new UcReferences();
+  const noGainCache = new Map<string, true>();
   pi.on("session_start", () => {
     references.clear();
     transformCache.clear();
+    noGainCache.clear();
   });
   let lastCalibratedCpt: number | undefined;
   let visionKnown: boolean | null = null;
@@ -64,7 +66,9 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
   const keyFor = (text: string) =>
     cacheKey(
-      { p: settings.policy, v: visionKnown, s: settings.snap.minChars, u: settings.uc.minChars, cpt: lastCalibratedCpt },
+      { p: settings.policy, v: visionKnown, s: settings.snap.minChars, u: settings.uc.minChars,
+        snap: settings.snap.enabled, uc: settings.uc.enabled, bin: settings.uc.bin,
+        imageTokens: settings.snap.imageTokensPerFrame, cpt: lastCalibratedCpt },
       text,
     );
 
@@ -81,7 +85,9 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   // ── Live transforms ────────────────────────────────────────────────────
   pi.on("context", async (event, ctx) => {
     if (!settings.snap.enabled && !settings.uc.enabled) return undefined;
-    if (visionKnown === null) {
+    // Re-evaluate on model switches; a session-start vision latch can send
+    // cached image transforms to a later text-only model.
+    {
       try {
         const model = ctx?.model as { input?: string[]; provider?: string } | undefined;
         const registryVision = Array.isArray(model?.input) ? model!.input.includes("image") : false;
@@ -106,7 +112,12 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
       return key;
     };
     const candidates = collectCandidates(messages, minChars, requestKeyFor);
-    const fresh = candidates.filter((c) => !transformCache.has(c.key));
+    const unseen = new Set<string>();
+    const fresh = candidates.filter((c) => {
+      if (transformCache.has(c.key) || noGainCache.has(c.key) || unseen.has(c.key)) return false;
+      unseen.add(c.key);
+      return true;
+    });
     if (fresh.length > 0) {
       // Batch-compute transforms for unseen blocks in one UltraCompress call. Synthetic
       // minimal messages keep indices stable: one candidate per message.
@@ -123,6 +134,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         ucEnabled: settings.uc.enabled,
         snapMinChars: settings.snap.minChars,
         ucMinChars: settings.uc.minChars,
+        imageTokensPerFrame: settings.snap.imageTokensPerFrame,
         ...(lastCalibratedCpt ? { charsPerToken: lastCalibratedCpt } : {}),
       };
       const res = await runUltraCompress<TransformResponse>(
@@ -161,7 +173,14 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
             });
           }
         }
+        // Only the newer core's explicit successful decisions are memoized.
+        // Legacy responses and codec/process failures remain retryable.
+        for (const position of res.data.no_gain ?? []) {
+          const c = fresh[position.message_index];
+          if (c && position.block_index === 0 && !transformCache.has(c.key)) noGainCache.set(c.key, true);
+        }
         capCache(transformCache);
+        capCache(noGainCache);
       } else if (res.error) {
         dbg({ transformError: res.error });
       }
@@ -220,7 +239,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
       try {
         const model = ctx?.model as { input?: string[]; provider?: string } | undefined;
         const registryVision = Array.isArray(model?.input) ? model!.input.includes("image") : false;
-        return registryVision && settings.snap.providers.includes(String(model?.provider ?? ""));
+        return settings.snap.enabled && registryVision && settings.snap.providers.includes(String(model?.provider ?? ""));
       } catch {
         return null;
       }
@@ -248,7 +267,8 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     });
 
     const rcArgs = ["compact", "--policy", stdin.policy, "--vision", stdin.vision as string];
-    const res = await runUltraCompress<UltraCompressCompactResult>(ultracompressBin, rcArgs, stdin, 30_000);
+    const res = await runUltraCompress<UltraCompressCompactResult>(ultracompressBin, rcArgs,
+      { ...stdin, imageTokensPerFrame: settings.snap.imageTokensPerFrame }, 30_000);
     if (!res.ok || !res.data) {
       // Never brick the session: fall through to Pi core compaction.
       dbg({ compactError: res.error, reason: ev.reason });
@@ -259,6 +279,14 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     }
 
     const rc = res.data;
+    if (typeof rc.stats?.tokens_before_est === "number" &&
+        typeof rc.stats?.tokens_after_est === "number" &&
+        rc.stats.tokens_after_est >= rc.stats.tokens_before_est) {
+      // Cancel explicitly: falling through would start a paid core summary
+      // for a locally successful but non-beneficial compaction.
+      try { ctx?.ui?.notify?.("ultracompress: kept context unchanged (no estimated compaction gain)", "info"); } catch {}
+      return { cancel: true };
+    }
     if (typeof rc.stats?.chars_per_token === "number" && rc.stats.calibrated) {
       lastCalibratedCpt = rc.stats.chars_per_token;
     }

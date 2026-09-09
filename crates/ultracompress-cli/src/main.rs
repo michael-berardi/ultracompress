@@ -174,7 +174,7 @@ fn parse_cli(args: &[String]) -> Cli {
 }
 
 /// Load entries either from --session or stdin `{ "entries": [...] }`.
-fn load_entries(cli: &Cli) -> (Vec<serde_json::Value>, Option<u64>) {
+fn load_entries(cli: &Cli) -> (Vec<serde_json::Value>, Option<u64>, Value) {
     if let Some(path) = &cli.session {
         let raw = std::fs::read_to_string(path)
             .unwrap_or_else(|e| die(&format!("cannot load session: {e}")));
@@ -188,24 +188,23 @@ fn load_entries(cli: &Cli) -> (Vec<serde_json::Value>, Option<u64>) {
                 )
             })
             .collect();
-        return (entries, None);
+        return (entries, None, Value::Null);
     }
     let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
-    let v: serde_json::Value =
+    let mut v: serde_json::Value =
         serde_json::from_slice(&bytes).unwrap_or_else(|e| die(&format!("bad stdin JSON: {e}")));
-    match v.get("entries") {
-        Some(entries) => {
-            let tb = v.get("tokensBefore").and_then(|t| t.as_u64());
-            (entries.as_array().cloned().unwrap_or_default(), tb)
-        }
-        None => {
-            // Bare message array also accepted.
-            if v.is_array() {
-                (v.as_array().cloned().unwrap(), None)
-            } else {
-                die("stdin JSON must be { \"entries\": [...] } or a message array")
-            }
-        }
+    // Move large entry arrays rather than cloning them and retaining a second
+    // full session inside the settings envelope throughout compaction.
+    if let Some(entries) = v.as_object_mut().and_then(|obj| obj.remove("entries")) {
+        let tb = v.get("tokensBefore").and_then(|t| t.as_u64());
+        let Value::Array(entries) = entries else {
+            die("entries must be an array")
+        };
+        (entries, tb, v)
+    } else if let Value::Array(entries) = v {
+        (entries, None, Value::Null)
+    } else {
+        die("stdin JSON must be { \"entries\": [...] } or a message array")
     }
 }
 
@@ -224,18 +223,76 @@ fn previous_summary(cli: &Cli) -> Option<String> {
     None
 }
 
+/// Adapter JSON settings are defaults; explicit CLI options take precedence.
+/// Decode types strictly so a malformed setting does not silently change policy.
+fn stdin_setting<T: serde::de::DeserializeOwned>(v: &Value, key: &str) -> Option<T> {
+    v.get(key).filter(|value| !value.is_null()).map(|value| {
+        serde_json::from_value(value.clone()).unwrap_or_else(|e| die(&format!("bad {key}: {e}")))
+    })
+}
+
+fn apply_stdin_settings(cli: &mut Cli, v: &Value, args: &[String]) {
+    let has = |flags: &[&str]| args.iter().any(|arg| flags.contains(&arg.as_str()));
+    if !has(&["--policy"]) {
+        if let Some(value) = stdin_setting(v, "policy") {
+            cli.policy = value;
+        }
+    }
+    if !has(&["--vision"]) {
+        if let Some(value) = stdin_setting(v, "vision") {
+            cli.vision = value;
+        }
+    }
+    if !has(&["--keep", "--keep-user-turns", "--keep-default"]) && v.get("keepUserTurns").is_some()
+    {
+        cli.keep = stdin_setting(v, "keepUserTurns");
+    }
+    if !has(&["--no-smart-keep"]) {
+        if let Some(value) = stdin_setting(v, "smartKeepTail") {
+            cli.smart = value;
+        }
+    }
+    if !has(&["--uc-bin"]) {
+        if let Some(value) = stdin_setting(v, "ucBin") {
+            cli.uc_bin = value;
+        }
+    }
+    if !has(&["--no-uc"]) {
+        if let Some(value) = stdin_setting(v, "ucEnabled") {
+            cli.uc_enabled = value;
+        }
+    }
+    if !has(&["--uc-min-chars"]) {
+        if let Some(value) = stdin_setting(v, "ucMinChars") {
+            cli.uc_min = value;
+        }
+    }
+    if !has(&["--snap-min-chars"]) {
+        if let Some(value) = stdin_setting(v, "snapMinChars") {
+            cli.snap_min = value;
+        }
+    }
+    if !has(&["--image-tokens-per-frame"]) {
+        if let Some(value) = stdin_setting(v, "imageTokensPerFrame") {
+            cli.image_tokens = Some(value);
+        }
+    }
+}
+
 fn main_plan(args: &[String], dry: bool) {
-    let cli = parse_cli(args);
-    let (entries, tokens_before) = load_entries(&cli);
+    let mut cli = parse_cli(args);
+    let (entries, tokens_before, settings) = load_entries(&cli);
+    apply_stdin_settings(&mut cli, &settings, args);
     let input = CompactInput {
         entries,
         tokens_before,
-        previous_summary: previous_summary(&cli),
+        previous_summary: stdin_setting(&settings, "previousSummary")
+            .or_else(|| previous_summary(&cli)),
         policy: cli.policy,
         keep_user_turns: cli.keep,
         smart_keep_tail: cli.smart,
         vision: cli.vision,
-        model_vision: None,
+        model_vision: stdin_setting(&settings, "modelVision"),
         uc_bin: Some(cli.uc_bin.clone()),
         uc_enabled: cli.uc_enabled,
         thresholds: Some(ultracompress_core::classify::Thresholds {
@@ -265,19 +322,23 @@ fn main_plan(args: &[String], dry: bool) {
 }
 
 fn main_transform(args: &[String]) {
-    let cli = parse_cli(args);
+    let mut cli = parse_cli(args);
     let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
-    let v: serde_json::Value =
+    let mut v: serde_json::Value =
         serde_json::from_slice(&bytes).unwrap_or_else(|e| die(&format!("bad stdin JSON: {e}")));
-    let messages = match &v {
-        Value::Array(_) => v.clone(),
-        obj => obj
-            .get("messages")
-            .cloned()
-            .unwrap_or_else(|| die("stdin must be a message array or { \"messages\": [...] }")),
+    apply_stdin_settings(&mut cli, &v, args);
+    let messages = if v.is_array() {
+        std::mem::take(&mut v)
+    } else {
+        v.as_object_mut()
+            .and_then(|obj| obj.remove("messages"))
+            .unwrap_or_else(|| die("stdin must be a message array or { \"messages\": [...] }"))
+    };
+    let Value::Array(messages) = messages else {
+        die("messages must be an array")
     };
     let input = ultracompress_core::transform::TransformInput {
-        messages: messages.as_array().cloned().unwrap_or_default(),
+        messages,
         policy: cli.policy,
         vision: cli.vision,
         model_vision: v.get("modelVision").and_then(|m| m.as_bool()),

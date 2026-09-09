@@ -86,8 +86,16 @@ pub struct TransformStats {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct BlockPosition {
+    pub message_index: usize,
+    pub block_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct TransformResult {
     pub ops: Vec<TransformOp>,
+    /// Successful no-gain decisions safe to memoize. Failures are omitted.
+    pub no_gain: Vec<BlockPosition>,
     pub stats: TransformStats,
     pub uc_status: crate::ucbridge::UcStatus,
 }
@@ -120,6 +128,7 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
     let snap_cfg = input.snap.clone().unwrap_or_default();
 
     let mut ops = Vec::new();
+    let mut no_gain = Vec::new();
     let mut blocks_scanned = 0usize;
     let mut tokens_before = 0u64;
     let mut tokens_after = 0u64;
@@ -163,6 +172,10 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                             continue;
                         };
                         if after >= before {
+                            no_gain.push(BlockPosition {
+                                message_index: mi,
+                                block_index: bi,
+                            });
                             continue;
                         }
                         tokens_before += before;
@@ -175,11 +188,20 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                             tokens_before: before,
                             tokens_after: after,
                         });
+                    } else if uc.no_gain(text) {
+                        no_gain.push(BlockPosition {
+                            message_index: mi,
+                            block_index: bi,
+                        });
                     }
                 }
                 crate::classify::Engine::Snap => {
                     let plan = plan_snap(text, &snap_cfg, input.image_tokens_per_frame, cpt);
                     if !plan.worthwhile {
+                        no_gain.push(BlockPosition {
+                            message_index: mi,
+                            block_index: bi,
+                        });
                         continue;
                     }
                     let SnapResult {
@@ -234,6 +256,7 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
 
     Ok(TransformResult {
         ops,
+        no_gain,
         stats: TransformStats {
             blocks_scanned,
             uc_ops,

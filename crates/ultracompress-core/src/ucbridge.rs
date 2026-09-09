@@ -138,8 +138,19 @@ impl UcBridge {
         }
         let result = self.encode_json_uncached(text);
         self.encodes += 1;
-        self.cache.insert(key, result.clone());
-        result
+        match result {
+            Ok(packet) => {
+                self.cache.insert(key, packet.clone());
+                packet
+            }
+            Err(()) => None, // A transient failure is not a no-gain decision.
+        }
+    }
+
+    /// True only after a successful, deterministic no-gain decision.
+    pub fn no_gain(&self, text: &str) -> bool {
+        let key: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        matches!(self.cache.get(&key), Some(None))
     }
 
     /// Run `uc encode --stats` on one wire payload. Returns the packet text
@@ -191,17 +202,22 @@ impl UcBridge {
         String::from_utf8(out.stdout).ok()?.trim().parse().ok()
     }
 
-    fn encode_json_uncached(&mut self, text: &str) -> Option<UcPacket> {
+    fn encode_json_uncached(&mut self, text: &str) -> Result<Option<UcPacket>, ()> {
         // Older extensions copy dense packets through the model. Do not enable
         // plain-text envelopes until a reference-aware caller explicitly opts in.
         let allow_text = std::env::var("UC_TEXT_ENVELOPES").as_deref() == Ok("1");
-        self.encode_input(text, allow_text)
+        self.try_encode_input(text, allow_text)
     }
 
+    #[cfg(test)]
     fn encode_input(&self, text: &str, allow_text: bool) -> Option<UcPacket> {
+        self.try_encode_input(text, allow_text).ok().flatten()
+    }
+
+    fn try_encode_input(&self, text: &str, allow_text: bool) -> Result<Option<UcPacket>, ()> {
         let envelope = serde_json::from_str::<serde_json::Value>(text).is_err();
         if envelope && !allow_text {
-            return None;
+            return Ok(None);
         }
         // Valid JSON never takes the envelope fallback, even on a codec-j tie.
         let wire = if envelope {
@@ -209,12 +225,17 @@ impl UcBridge {
         } else {
             text.to_string()
         };
-        let (packet, tokens_uc, tokens_json) = self.run_encode(&wire).ok()?;
-        let tokens_source = self.count_tokens(text)?;
-        if tokens_uc >= tokens_json || tokens_uc >= tokens_source {
-            return None;
+        let (packet, tokens_uc, tokens_json) = self.run_encode(&wire)?;
+        // A codec-j tie cannot win. Avoid launching another tokenizer process
+        // merely to count an already-rejected candidate.
+        if tokens_uc >= tokens_json {
+            return Ok(None);
         }
-        Some(UcPacket {
+        let tokens_source = self.count_tokens(text).ok_or(())?;
+        if tokens_uc >= tokens_source {
+            return Ok(None);
+        }
+        Ok(Some(UcPacket {
             packet,
             tokens_uc,
             tokens_json,
@@ -222,7 +243,7 @@ impl UcBridge {
             source_chars: text.len(),
             savings_pct: (1.0 - tokens_uc as f64 / tokens_source as f64) * 100.0,
             envelope,
-        })
+        }))
     }
 }
 

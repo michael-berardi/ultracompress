@@ -8,13 +8,13 @@ UltraCompact encodings. Original session records remain available for recall.
 
 ## Install
 
-Release: **0.2.1** — the Pi adapter ships streaming snapshots and stdin;
-the `uc` binary is unchanged at 0.2.0. Building from source requires Rust
+Release: **0.2.2** (Pi adapter 0.2.2, CLI 0.2.1) — avoids immediate retrieval and
+repeated no-gain work; retains streaming snapshots and stdin. Building from source requires Rust
 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and Node.js 22.19
 or newer.
 
 ```sh
-git clone --branch v0.2.1 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.2.2 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -50,11 +50,15 @@ The 0.1.2 adapter avoids asking the model to transcribe dense packets. It keeps
 a bounded, session-local original-text cache and puts a `uc:<hash>` retrieval
 reference in context instead. `ultracompress_uc` returns the exact original.
 Decoded and recalled results remain readable rather than being recompressed.
-Fresh `read` results also remain readable for the first model request that
-consumes them: archiving a requested file and immediately retrieving it adds
-cost. Older reads can still be archived on subsequent requests. This avoids
+All fresh tool results remain readable for the first model request that
+consumes them: archiving requested output and immediately retrieving it adds
+cost. Older results can still be archived on subsequent requests. This avoids
 that immediate round trip, not a guarantee of lower total session cost.
-The cache is limited to 256 entries / 32 MiB; unavailable references direct the
+Successful no-gain decisions are memoized separately (600 entries, session-local);
+failed encodes remain retryable. Duplicate candidates are evaluated once per
+request. Model switches re-evaluate vision eligibility. Non-beneficial compaction
+is cancelled without invoking a paid core summary.
+The original-text cache is limited to 256 entries / 32 MiB; unavailable references direct the
 agent to raw-session recall or the original source. Oversized entries stay as
 text. Complete legacy `@UC1` packets remain supported.
 

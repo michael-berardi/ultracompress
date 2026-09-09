@@ -1,5 +1,26 @@
 # Changelog
 
+## Extension 0.2.2 / CLI 0.2.1 — avoid repeated work and immediate retrieval
+
+- All fresh tool results, not only reads, remain readable until their first
+  consuming model request. Historical results remain eligible for transforms.
+- Deduplicate identical candidates within a request. Memoize the CLI's explicit
+  successful no-gain decisions in a bounded session cache; transient failures
+  and legacy responses without this metadata remain retryable.
+- Codec-j ties skip the redundant source-token counting subprocess. Failed
+  encodes are no longer memoized as successful no-gain decisions.
+- Re-evaluate vision eligibility when models change, preventing stale cached
+  image transforms from being sent to text-only models.
+- Honor adapter JSON settings at the CLI boundary (codec binary/opt-out,
+  thresholds, keep-tail policy, model vision and previous summary). Previously
+  most were silently ignored. Explicit CLI options retain precedence; regression
+  tests exercise the real process boundary and summary carry-forward.
+- Include the previous summary in pre-compaction token estimates. Cancel
+  non-beneficial compaction in the Pi adapter without invoking a paid core
+  fallback. Estimates remain estimates, not provider-billed savings.
+- No new dependencies, model calls, persistent payload stores, or wire-format
+  changes. The optional transform response field `no_gain` is backward compatible.
+
 ## Extension 0.2.1 — streaming snapshots and stdin on oversized sessions
 
 - Pre-compaction snapshots are written by streaming JSON to disk entry by

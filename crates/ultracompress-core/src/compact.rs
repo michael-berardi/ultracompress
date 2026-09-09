@@ -533,7 +533,9 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     } else {
         tokens_from_chars(total_chars_of(&live[cut.first_kept_index..]), cpt)
     };
-    let tokens_before_est = summarized_tokens + kept_tokens;
+    // The prior summary is part of the context being replaced, not free input.
+    // Omitting it under-reported the baseline and could report false expansion.
+    let tokens_before_est = summarized_tokens + kept_tokens + tokens_from_chars(prev_chars, cpt);
     let tokens_after_est = summary_tokens + kept_tokens;
     let savings_pct = if tokens_before_est > 0 {
         (1.0 - tokens_after_est as f64 / tokens_before_est as f64) * 100.0
@@ -846,6 +848,14 @@ mod tests {
             "previous files should persist across merge"
         );
         assert!(r.details["previousSummaryUsed"].as_bool().unwrap());
+        let mut without_previous = input.clone();
+        without_previous.previous_summary = None;
+        let baseline = run(&without_previous).unwrap();
+        assert_eq!(
+            r.stats.tokens_before_est,
+            baseline.stats.tokens_before_est
+                + tokens_from_chars(prev.len(), r.stats.chars_per_token)
+        );
     }
 
     #[test]
