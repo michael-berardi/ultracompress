@@ -1,20 +1,54 @@
+<!-- Suggested GitHub repo topics: context-compaction, claude-code, claude-code-plugin, pi-coding-agent, llm, ai-agents, coding-agent, token-optimization, rust, cli, developer-tools -->
+
+<div align="center">
+
 # UltraCompress
 
-Deterministic local compaction and raw-session recall for [Pi](https://pi.dev).
+### Deterministic context compaction. Local, lossless recall. No LLM in the loop.
 
-UltraCompress builds structured conversation briefs without making an LLM
-request. It can also replace suitable tool output with image frames or optional
-UltraCompact encodings. Original session records remain available for recall.
+**Structured briefs instead of model-written summaries. Every condensed byte
+still searchable. $0 per compaction.**
+
+*The compaction layer for people who read their agent's bills.*
+
+[Install](#install) · [Claude Code](#claude-code) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
+
+</div>
+
+---
+
+UltraCompress is content-aware context compaction for LLM coding agents. It
+builds a structured conversation brief without an LLM request, replaces bulky
+tool output with image frames or optional lossless encodings, and keeps the
+raw session on disk so a recall tool can still find anything that was
+condensed. It ships as a Rust CLI plus a [Pi coding agent](https://pi.dev)
+adapter and a standalone [Claude Code](#claude-code) plugin — the two places
+coding agents currently compact, both served by the same engine.
+
+Summary generation by another model call is a strange way to save model calls.
+UltraCompress skips the middleman: compaction runs locally in roughly 10–300
+ms, deterministically, at zero API cost. What it drops stays recoverable,
+ranked recall measured at **94.4% hit@5** on its published fixture
+([docs/BENCHMARKS.md](docs/BENCHMARKS.md)). Context management should not
+require another context-management agent.
+
+## New in 0.3.0
+
+- **A standalone Claude Code plugin** (`claude-code/`): compaction and recall
+  for Claude Code without UltraTerm — see [Claude Code](#claude-code).
+- **Native Claude Code transcript recall**: `ultracompress recall` reads
+  `~/.claude/projects/**/*.jsonl` directly (`--format auto|pi|claude`), keyed
+  by `uuid`/`parentUuid`, crossing compaction boundaries through
+  `logicalParentUuid`. No converters. Pi sessions behave exactly as before.
 
 ## Install
 
-Release: **0.2.2** (Pi adapter 0.2.2, CLI 0.2.1) — avoids immediate retrieval and
-repeated no-gain work; retains streaming snapshots and stdin. Building from source requires Rust
-1.85 or newer. The Pi adapter is tested with Pi 0.85.x and Node.js 22.19
-or newer.
+Release: **0.3.0** (this branch; published with the v0.3.0 tag). Building from
+source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
+and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.2.2 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.3.0 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -32,6 +66,29 @@ encoding. Without it, VCC compaction and raw-history recall still work. The
 adapter falls back to Pi's core compaction when the bridge is unavailable or
 fails.
 
+## Claude Code
+
+A standalone, drop-in Claude Code plugin lives in
+[`claude-code/`](claude-code/README.md). One session:
+
+```sh
+claude --plugin-dir /path/to/ultracompress/claude-code
+```
+
+or symlink the folder into `~/.claude/skills/ultracompress` to auto-load. It
+replaces Claude Code's compaction summarizer with the same deterministic local
+engine — no model call for the summary — and registers an
+`ultracompress_recall` tool over the raw transcript. If the binary is missing
+or fails, one log line explains why and Claude's stock compaction runs;
+nothing bricks. Claude recall defaults to the whole current session (every
+branch, pre-compaction history included) because lineage alone stops at
+compaction boundaries in real transcripts.
+
+Full install, the binary lookup order, and uninstall:
+[`claude-code/README.md`](claude-code/README.md).
+
+**UltraTerm users already have this built in. Do not load both.**
+
 ## Representations and savings
 
 | Representation | Purpose |
@@ -46,8 +103,8 @@ selects ordinary minified JSON for a single long string; zero additional savings
 in that case is expected. There is no guaranteed percentage improvement for an
 arbitrary input.
 
-The 0.1.2 adapter avoids asking the model to transcribe dense packets. It keeps
-a bounded, session-local original-text cache and puts a `uc:<hash>` retrieval
+The adapter avoids asking the model to transcribe dense packets. It keeps a
+bounded, session-local original-text cache and puts a `uc:<hash>` retrieval
 reference in context instead. `ultracompress_uc` returns the exact original.
 Decoded and recalled results remain readable rather than being recompressed.
 All fresh tool results remain readable for the first model request that
@@ -78,20 +135,23 @@ UltraCompress's recall command searches **one explicitly selected session
 JSONL**, including records omitted from the active context. The Pi adapter
 passes the current session file and actual branch tip, so tree navigation and
 resume do not accidentally select the last-written sibling branch. No session
-archive scan or automatic widening occurs. Pi itself also retains session
-history; compaction does not imply that on-disk records were destroyed.
+archive scan or automatic widening occurs. Claude Code transcripts are read
+the same way: one file, whole.
 
-- Default `scope:lineage`: the current path, including pre-compaction history.
-- `scope:all`: all branches of that same session, **not all sessions**.
+- Default `scope:lineage` (Pi): the current path, including pre-compaction history.
+- `scope:all`: all branches of that same session, **not all sessions**. The
+  Claude Code plugin defaults to `all`, because lineage alone stops at the
+  newest compaction boundary in a real transcript.
 - `sessionFile`: explicitly select another session JSONL. For another file,
   lineage starts at its last recorded entry; the current session's tip is not
   reused. Missing files, broken lineage, and invalid selectors return errors.
 - `role`, `toolName`, `afterEntry`, `beforeEntry`: narrow before ranking. Entry
   ranges are exclusive and refer to the selected scope's entry order.
-- `perPage` (default 5, maximum 20), `snippetBytes` (default 1000), and
-  `maxOutputBytes` (default 12000) bound output. These are UTF-8 **byte** budgets,
-  not token guarantees. The output budget covers complete result JSON, excluding
-  the host's tool-transport wrapper. Excerpts may shrink to fit; metadata that
+- `perPage` (default 5, maximum 20), `snippetBytes` (default 1000; the host
+  bridges pass 4000), and `maxOutputBytes` (default 12000) bound output. These
+  are UTF-8 **byte** budgets, not token
+  guarantees. The output budget covers complete result JSON, excluding the
+  host's tool-transport wrapper. Excerpts may shrink to fit; metadata that
   cannot fit returns an error rather than silently dropping page members.
   Pages beyond the available results return an error, not repeated final-page hits.
 
@@ -103,19 +163,27 @@ IDs. Prefer a narrow query and small page before explicitly widening.
 /ultracompress-recall {"query":"release decision","sessionFile":"/path/other session.jsonl","scope":"all"}
 ```
 
-The CLI requires `--session FILE`; use `--leaf ID` for an explicit tip,
-`--scope lineage|all`, `--role`, `--tool-name`, `--after-entry`, `--before-entry`,
-`--per-page`, `--snippet-bytes`, and `--max-output-bytes`. Regex is explicit via
-`--regex` / tool `regex:true`; the command also accepts `/pattern/`.
+The CLI requires `--session FILE` (Pi session or Claude Code transcript;
+`--format auto|pi|claude`, default auto), with `--leaf ID` for an explicit tip,
+`--scope lineage|all`, `--role`, `--tool-name`, `--after-entry`,
+`--before-entry`, `--per-page`, `--snippet-bytes`, and `--max-output-bytes`.
+Regex is explicit via `--regex` / tool `regex:true`; the command also accepts
+`/pattern/`.
 
-The recall benchmark reports **94.4% hit@5** across 72 sampled facts from nine
+## Measurements
+
+The recall fixture reports **94.4% hit@5** across 72 sampled facts from nine
 sessions. It measures UltraCompress's retrieval accuracy; other systems' recall
-accuracy is outside that fixture's scope. Latency, task-cost, and JSON-size
-measurements are documented in
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md); they are fixture-specific, not guaranteed
-product performance.
+accuracy is outside that fixture's scope. Offline compaction footprints,
+latency, task-cost, and JSON-size measurements are documented in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md); they are fixture-specific, not
+guaranteed product performance.
 
-## Commands
+**Claude-versus-UltraCompress numbers are being measured now and will be
+published with the release.** Nothing on this page invents them; when the A/B
+run is done, this section is where it lands.
+
+## Commands (Pi adapter)
 
 | Command | Purpose |
 | --- | --- |
@@ -126,7 +194,8 @@ product performance.
 
 Agent tools: `ultracompress_recall` searches history;
 `ultracompress_uc` retrieves a reference or decodes a complete legacy packet.
-Never reconstruct, abbreviate, or repeatedly retry a damaged packet.
+Never reconstruct, abbreviate, or repeatedly retry a damaged packet. The Claude
+Code plugin registers the same recall tool as `mcp__ultracompress__ultracompress_recall`.
 
 ## Configuration
 
@@ -174,6 +243,13 @@ cd extension
 npm ci
 npm run typecheck
 npm test
+```
+
+Claude Code plugin checks (function hooks are early access, hence the switch):
+
+```sh
+CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate claude-code
+CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test claude-code
 ```
 
 The Rust CLI is independent of Pi. Its JSON-in/JSON-out contract is usable by

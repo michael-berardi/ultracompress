@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.3.0 (unreleased) — Claude Code transcript recall
+## 0.3.0 (unreleased) — Claude Code plugin and transcript recall
+
+- New standalone Claude Code plugin under `claude-code/`: a drop-in function
+  hooks plugin (`session.compact` + recall tool `mcp__ultracompress__ultracompress_recall`)
+  that replaces Claude Code's compaction summarizer with the local binary — no
+  model call for the summary — and falls back to stock compaction with one log
+  line whenever the binary is missing, fails, times out (30 s), or yields no
+  clean cut. Binary lookup: `$ULTRACOMPRESS_BIN`, `~/.local/bin/ultracompress`,
+  `~/.ultraterm/bin/ultracompress`, `/opt/homebrew/bin/ultracompress`,
+  `/usr/local/bin/ultracompress` (first regular file wins). Tested with
+  `claude plugin validate` / `claude plugin test`; install and uninstall are
+  documented in `claude-code/README.md`. UltraTerm users already have this
+  plugin built in and should not load both copies.
 
 - `ultracompress recall` reads Claude Code transcripts (`~/.claude/projects/**/*.jsonl`)
   natively — no converters. Records are keyed by `uuid` and parented by
