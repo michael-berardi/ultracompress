@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 (unreleased) — Claude Code transcript recall
+
+- `ultracompress recall` reads Claude Code transcripts (`~/.claude/projects/**/*.jsonl`)
+  natively — no converters. Records are keyed by `uuid` and parented by
+  `parentUuid`; `tool_use` blocks map to tool calls and `tool_result` blocks
+  to tool results with the tool name resolved from the originating call;
+  sidechain records are skipped and meta records stay as unsearchable chain
+  nodes. Records written before compactions remain searchable; lineage
+  follows the parent chain from the newest non-sidechain leaf and crosses
+  compact boundaries through `logicalParentUuid` (a boundary re-anchor that
+  points back into the preserved post-boundary chain is cut, not failed).
+- New `--format auto|pi|claude` flag, default `auto`: detection keys on the
+  Pi `type:"session"` header vs Claude record shapes. Explicit `pi` keeps the
+  previous parser and its strict errors byte for byte; `--leaf` accepts a
+  Claude uuid.
+- Claude parsing streams line by line and is fault-tolerant: malformed lines
+  are skipped and reported as a counted warning (result `warnings` field plus
+  a stderr note) instead of aborting; duplicate uuids keep the first record.
+- ISO 8601 record timestamps map to epoch seconds on hits. No new
+  dependencies, wire-format breaks, or behavior changes for Pi sessions.
 ## Extension 0.2.2 / CLI 0.2.1 — avoid repeated work and immediate retrieval
 
 - All fresh tool results, not only reads, remain readable until their first

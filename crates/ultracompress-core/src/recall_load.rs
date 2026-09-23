@@ -1,6 +1,9 @@
 use crate::model::{parse_message, RcMessage};
+use crate::recall::RecallFormat;
+use crate::recall_claude;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 #[derive(Clone)]
@@ -13,11 +16,60 @@ pub struct RecallEntry {
 pub struct RecallFile {
     pub session_id: String,
     pub entries: Vec<RecallEntry>,
+    /// Malformed lines skipped while parsing (Claude transcripts only; the
+    /// Pi parser keeps its strict historical behavior).
+    pub warnings: usize,
 }
 
-pub fn load(path: &Path) -> Result<RecallFile, String> {
-    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    parse(&raw)
+/// Load a recall file as a Pi session, a Claude Code transcript, or by
+/// auto-detection. Explicit Pi keeps the historical parser, including its
+/// strict error behavior, byte for byte.
+pub fn load_with_format(path: &Path, format: RecallFormat) -> Result<RecallFile, String> {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("session")
+        .to_string();
+    match format {
+        RecallFormat::Pi => {
+            let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            parse(&raw)
+        }
+        RecallFormat::Claude => recall_claude::load_path(path, &stem),
+        RecallFormat::Auto => {
+            if sniff_claude(path) {
+                recall_claude::load_path(path, &stem)
+            } else {
+                let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+                parse(&raw)
+            }
+        }
+    }
+}
+
+/// Cheap first-record sniff: Pi sessions open with `type:"session"`, Claude
+/// Code records key on `uuid`. Anything ambiguous falls back to the Pi
+/// parser so historical error messages are preserved.
+fn sniff_claude(path: &Path) -> bool {
+    let Ok(f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut rdr = BufReader::new(f);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match rdr.read_line(&mut line) {
+            Ok(0) | Err(_) => return false,
+            Ok(_) => {}
+        }
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        return serde_json::from_str::<Value>(t)
+            .map(|v| recall_claude::is_claude_record(&v))
+            .unwrap_or(false);
+    }
 }
 pub fn parse(raw: &str) -> Result<RecallFile, String> {
     let mut sid = String::new();
@@ -87,6 +139,7 @@ pub fn parse(raw: &str) -> Result<RecallFile, String> {
     Ok(RecallFile {
         session_id: sid,
         entries,
+        warnings: 0,
     })
 }
 /// Validate every branch in linear time without walking shared ancestors

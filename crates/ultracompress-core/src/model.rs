@@ -1,6 +1,7 @@
-//! Core data model: messages and content blocks, tolerant of both raw Pi
-//! `AgentMessage` shapes (session JSONL) and converted LLM `Message` shapes
-//! (what the extension passes over stdin).
+//! Core data model: messages and content blocks, tolerant of raw Pi
+//! `AgentMessage` shapes (session JSONL), converted LLM `Message` shapes
+//! (what the extension passes over stdin), and Claude Code block shapes
+//! (`tool_use`/`tool_result`/`thinking`, base64 image sources).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -173,7 +174,7 @@ fn parse_block(v: &Value) -> Option<Block> {
                 .unwrap_or("")
                 .to_string(),
         }),
-        "toolCall" | "tool_call" | "toolUse" => Some(Block::ToolCall {
+        "toolCall" | "tool_call" | "toolUse" | "tool_use" => Some(Block::ToolCall {
             id: obj
                 .get("id")
                 .and_then(|t| t.as_str())
@@ -184,13 +185,18 @@ fn parse_block(v: &Value) -> Option<Block> {
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            arguments: obj.get("arguments").cloned().unwrap_or(Value::Null),
+            arguments: obj
+                .get("arguments")
+                .or_else(|| obj.get("input"))
+                .cloned()
+                .unwrap_or(Value::Null),
         }),
         "toolResult" | "tool_result" => Some(Block::ToolResult {
             tool_call_id: obj
                 .get("toolCallId")
                 .or_else(|| obj.get("tool_call_id"))
                 .or_else(|| obj.get("toolUseId"))
+                .or_else(|| obj.get("tool_use_id"))
                 .and_then(|t| t.as_str())
                 .unwrap_or("")
                 .to_string(),
@@ -207,24 +213,26 @@ fn parse_block(v: &Value) -> Option<Block> {
                 .and_then(|t| t.as_bool())
                 .unwrap_or(false),
         }),
-        "image" => Some(Block::Image {
-            mime_type: obj
-                .get("mimeType")
-                .or_else(|| obj.get("mime_type"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("image/png")
-                .to_string(),
-            data: obj
-                .get("data")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string(),
-            url: obj
-                .get("url")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string(),
-        }),
+        "image" => {
+            // Claude Code nests the payload under `source` (base64 or URL).
+            let source = obj.get("source").and_then(Value::as_object);
+            let field = |name: &str| obj.get(name).or_else(|| source.and_then(|s| s.get(name)));
+            Some(Block::Image {
+                mime_type: field("mimeType")
+                    .or_else(|| field("media_type"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("image/png")
+                    .to_string(),
+                data: field("data")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                url: field("url")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        }
         other => Some(Block::Other {
             kind: other.to_string(),
         }),

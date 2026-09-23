@@ -5,20 +5,23 @@
 //!   ultracompress compact     full compaction result (summary, details, stats)
 //!   ultracompress transform   live-context ops: UC packets + snap frames per block
 //!   ultracompress recall      ranked lossless search over a raw session JSONL
+//!                              (Pi sessions and Claude Code transcripts;
+//!                              `--format auto|pi|claude`, default auto)
 //!   ultracompress stats       per-role content breakdown of a session
 //!   ultracompress frames      render text to PNG frames (debugging / standalone use)
 //!   ultracompress uc          UC packet encode/decode bridge (degrades to plain JSON)
 //!   ultracompress version     print version
 //!
-//! Input: `--session FILE` (Pi session JSONL) or stdin JSON `{ "entries": [...] }`
-//! (the extension contract). Output: JSON on stdout, diagnostics on stderr.
+//! Input: `--session FILE` (Pi session JSONL or Claude Code transcript) or
+//! stdin JSON `{ "entries": [...] }` (the extension contract). Output: JSON on
+//! stdout, diagnostics on stderr.
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use ultracompress_core::compact::{run, CompactInput};
 use ultracompress_core::load::{load_session, read_stdin};
 use ultracompress_core::policy::{Policy, VisionMode};
-use ultracompress_core::recall::{search, RecallOptions};
+use ultracompress_core::recall::{search, RecallFormat, RecallOptions};
 use ultracompress_core::snap::{render_frames, SnapConfig};
 
 fn die(msg: &str) -> ! {
@@ -152,6 +155,14 @@ fn parse_cli(args: &[String]) -> Cli {
                 }
             }
             "--leaf" => c.recall.leaf_id = Some(val(&mut i)),
+            "--format" => {
+                c.recall.format = match val(&mut i).to_lowercase().as_str() {
+                    "auto" => RecallFormat::Auto,
+                    "pi" => RecallFormat::Pi,
+                    "claude" => RecallFormat::Claude,
+                    _ => die("bad --format (auto|pi|claude)"),
+                }
+            }
             "--role" => c.recall.role = Some(val(&mut i)),
             "--tool-name" => c.recall.tool_name = Some(val(&mut i)),
             "--after-entry" => c.recall.after_entry = Some(val(&mut i)),
@@ -378,6 +389,13 @@ fn main_recall(args: &[String]) {
         ..cli.recall
     };
     let result = search(&path, &opts).unwrap_or_else(|e| die(&e));
+    if result.warnings > 0 {
+        eprintln!(
+            "ultracompress: skipped {} malformed transcript line{}",
+            result.warnings,
+            if result.warnings == 1 { "" } else { "s" }
+        );
+    }
     println!(
         "{}",
         serde_json::to_string(&result).unwrap_or_else(|e| die(&e.to_string()))

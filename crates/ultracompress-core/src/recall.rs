@@ -6,6 +6,19 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Transcript container format for recall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecallFormat {
+    /// Detect Pi session headers vs Claude Code record shapes.
+    #[default]
+    Auto,
+    /// Classic Pi session JSONL (`type:"session"` header, `id`/`parentId`).
+    Pi,
+    /// Claude Code transcript (`uuid`/`parentUuid` records).
+    Claude,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RecallOptions {
     pub query: String,
@@ -20,6 +33,8 @@ pub struct RecallOptions {
     pub before_entry: Option<String>,
     pub snippet_bytes: usize,
     pub max_output_bytes: usize,
+    #[serde(default)]
+    pub format: RecallFormat,
 }
 impl Default for RecallOptions {
     fn default() -> Self {
@@ -36,6 +51,7 @@ impl Default for RecallOptions {
             before_entry: None,
             snippet_bytes: 1000,
             max_output_bytes: 12000,
+            format: RecallFormat::Auto,
         }
     }
 }
@@ -59,6 +75,8 @@ pub struct RecallResult {
     pub session_id: String,
     pub scope: String,
     pub leaf_id: Option<String>,
+    /// Malformed transcript lines skipped while parsing.
+    pub warnings: usize,
 }
 
 enum Matcher {
@@ -177,7 +195,7 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
     if o.scope_all && o.leaf_id.is_some() {
         return Err("explicit leaf is incompatible with scope_all".into());
     }
-    let f = recall_load::load(path)?;
+    let f = recall_load::load_with_format(path, o.format)?;
     let (indices, leaf) = if o.scope_all {
         recall_load::validate_all(&f)?;
         ((0..f.entries.len()).collect(), None)
@@ -328,6 +346,7 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
             "lineage".into()
         },
         leaf_id: leaf,
+        warnings: f.warnings,
     };
     shrink(&mut r, o.max_output_bytes)?;
     Ok(r)

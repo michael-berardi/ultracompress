@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"isMeta":false,"sessionId":"cc-plain","timestamp":"2026-01-02T03:04:05.000Z","cwd":"/p","message":{"role":"user","content":"remember the word ZEBRA-QUANTUM for later"}}
+{"type":"attachment","uuid":"at1","parentUuid":"u1","isSidechain":false}
+{"type":"assistant","uuid":"a1","parentUuid":"at1","isSidechain":false,"sessionId":"cc-plain","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"weighing the word","signature":"sig"},{"type":"text","text":"ZEBRA-QUANTUM noted"}]}}
+{"type":"system","uuid":"sys1","parentUuid":"a1","isSidechain":false,"isMeta":false,"subtype":"informational","level":"info","content":"OYSTER-MODE enabled for this session"}
+{"type":"system","uuid":"s1","parentUuid":"sys1","isSidechain":false,"isMeta":false,"subtype":"turn_duration","level":"info"}
+{"type":"user","uuid":"u2","parentUuid":"s1","isSidechain":false,"isMeta":false,"sessionId":"cc-plain","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"user","content":"now forget it"}}

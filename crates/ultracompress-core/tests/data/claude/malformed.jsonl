@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"sessionId":"cc-malformed","timestamp":"2026-01-02T03:04:05.000Z","message":{"role":"user","content":"valid OBOE-SONATA question"}}
+{"type":"assistant","uuid":"broken",  not json at all
+{"type":"assistant","uuid":"a1","parentUuid":"u1","isSidechain":false,"sessionId":"cc-malformed","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"OBOE-SONATA reply"}]}}
+{"type":"user","uuid":"u3","parentUuid":"a1","isSidechain":false,"sessionId":"cc-malformed","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"user","content":"missing nothing really"}}

@@ -1,0 +1,6 @@
+{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"sessionId":"cc-side","timestamp":"2026-01-02T03:04:05.000Z","message":{"role":"user","content":"MAIN-TRACK question"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","isSidechain":false,"sessionId":"cc-side","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"MAIN-TRACK answer"}]}}
+{"type":"assistant","uuid":"s1","parentUuid":null,"isSidechain":true,"sessionId":"cc-side","timestamp":"2026-01-02T03:04:06.500Z","message":{"role":"assistant","content":[{"type":"text","text":"SIDECHAIN-ONLY QUARTZ-FALCON exploration"}]}}
+{"type":"user","uuid":"s2","parentUuid":"s1","isSidechain":true,"sessionId":"cc-side","timestamp":"2026-01-02T03:04:06.750Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_s","content":"SIDECHAIN-ONLY result","is_error":false}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"a1","isSidechain":false,"sessionId":"cc-side","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"assistant","content":[{"type":"text","text":"MAIN-TRACK continued KESTREL-9"}]}}
+{"type":"user","uuid":"u2b","parentUuid":"u1","isSidechain":false,"sessionId":"cc-side","timestamp":"2026-01-02T03:04:07.500Z","message":{"role":"user","content":"BRANCH-SIBLING other branch"}}
