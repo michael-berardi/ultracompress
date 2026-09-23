@@ -4,7 +4,7 @@
 
 # UltraCompress
 
-### Deterministic context compaction. Local, lossless recall. No LLM in the loop.
+### Deterministic context compaction. Local, searchable recall. No LLM in the loop.
 
 **Structured briefs instead of model-written summaries. Every condensed byte
 still searchable. $0 per compaction.**
