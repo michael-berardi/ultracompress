@@ -238,9 +238,17 @@ export function formatCompactNotice(stats) {
     if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
     return String(v);
   };
-  const pct = typeof s.savings_pct === 'number' && Number.isFinite(s.savings_pct) ? s.savings_pct.toFixed(0) : '?';
-  const parts = [`UltraCompress · ${tok(s.tokens_before_est)} → ${tok(s.tokens_after_est)} tokens (\u2212${pct}%)`];
-  if (typeof s.kept_messages === 'number' && Number.isFinite(s.kept_messages)) parts.push(`kept ${s.kept_messages} turns`);
+  const before = typeof s.tokens_before_est === 'number' && Number.isFinite(s.tokens_before_est) ? s.tokens_before_est : null;
+  const after = typeof s.tokens_after_est === 'number' && Number.isFinite(s.tokens_after_est) ? s.tokens_after_est : null;
+  // Signed change from the two estimates (a short session can grow slightly:
+  // the brief has fixed sections), never a double sign.
+  let change = '';
+  if (before && after !== null) {
+    const pct = Math.round(((after - before) / before) * 100);
+    change = pct <= 0 ? ` (\u2212${Math.abs(pct)}%)` : ` (+${pct}%)`;
+  }
+  const parts = [`UltraCompress · ${tok(before)} \u2192 ${tok(after)} tokens${change}`];
+  if (typeof s.kept_messages === 'number' && Number.isFinite(s.kept_messages)) parts.push(`kept ${s.kept_messages} messages`);
   return parts.join(' · ');
 }
 
@@ -342,8 +350,14 @@ export async function handleCompact($, e, next) {
       `UltraCompress summary of the earlier conversation (${condensed} messages condensed; ` +
       'recall archived detail with the ultracompress_recall tool)';
     const capped = trigger === 'manual' ? summary : capSummaryUtf8(summary, SUMMARY_MAX_BYTES);
+    // The transcript line is cleared with the compacted conversation, so
+    // the result also shows as a toast the person actually sees.
+    const notice = formatCompactNotice(rc.stats);
     try {
-      $.ui.log(formatCompactNotice(rc.stats));
+      $.ui.log(notice);
+    } catch {}
+    try {
+      $.ui.toast(notice, { timeoutMs: 8000 });
     } catch {}
     const result = {
       messages: [{ role: 'user', text: `${header}\n\n${capped}`, toolUses: [] }, ...messages.slice(cut)],
@@ -464,8 +478,11 @@ export async function handleRecallCall($, e) {
     if (!st || st.kind !== 'file') {
       return { result: `UltraCompress recall failed: binary missing at ${bin}` };
     }
-    const transcript = await resolveTranscript($, e?.sessionFile);
-    const argv = recallArgvFrom(e ?? {}, transcript);
+    // tool.call's input carries the engine's reserved keys beside the tool's
+    // own arguments (ToolCallReserved + AgentLoop); only the arguments count.
+    const { tool: _tool, tool_use_id: _id, consent: _consent, agentId: _agent, ...params } = e ?? {};
+    const transcript = await resolveTranscript($, params.sessionFile);
+    const argv = recallArgvFrom(params, transcript);
     const res = await $.process.run([bin, ...argv], {
       env: await bridgeEnv($),
       timeoutMs: COMPACT_TIMEOUT_MS,

@@ -24,8 +24,9 @@ written before earlier compactions — with ranked keyword or regex queries,
 role/tool filters, and bounded excerpts. It reads one explicitly selected
 transcript; it never scans the session archive or other sessions.
 
-The compaction notice (`UltraCompress · 182k → 24k tokens (−87%) · kept 3
-turns`-style) is logged as it happens, so you always know who summarized what.
+Each compaction shows a short notice as a toast and in the log (for example
+`UltraCompress · 182k → 24k tokens (−87%) · kept 3 messages`), so you always
+know who summarized what.
 
 ## Install
 

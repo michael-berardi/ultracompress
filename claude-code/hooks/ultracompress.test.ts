@@ -239,7 +239,7 @@ test('success hands the summary message first, keeps handles, and reports honest
   expect(out.messages[3].handle).toBe('h5');
   expect(out.tokensBefore).toBe(182000);
   expect(out.tokensAfter).toBe(24000);
-  expect(logs.join('\n')).toContain('UltraCompress · 182k → 24k tokens (−87%) · kept 3 turns');
+  expect(logs.join('\n')).toContain('UltraCompress · 182k → 24k tokens (−87%) · kept 3 messages');
 });
 
 test('header counts condensed messages (the cut), not the kept tail', async () => {
@@ -309,7 +309,7 @@ test('manual instructions keep:/policy: steer the binary; formatCompactNotice is
   const next = async () => ({});
   await handleCompact($, { trigger: 'manual', instructions: 'keep:2 policy:vcc focus on the todo list', messages }, next);
   expect(policy).toBe('vcc');
-  expect(formatCompactNotice(RC.stats)).toBe('UltraCompress · 182k → 24k tokens (−87%) · kept 3 turns');
+  expect(formatCompactNotice(RC.stats)).toBe('UltraCompress · 182k → 24k tokens (−87%) · kept 3 messages');
 });
 
 test('summary cap and recall argv obey their byte/parameter bounds', () => {
