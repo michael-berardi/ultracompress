@@ -323,26 +323,37 @@ export async function handleCompact($, e, next) {
     const messages = Array.isArray(e.messages) ? e.messages : [];
     if (!messages.length) return fail('no transcript messages to compact');
 
-    const stdin = buildCompactStdin(messages, { instructions: e.instructions });
-    const res = await $.process.run([bin, 'compact', '--policy', stdin.policy, '--vision', stdin.vision], {
-      stdin: JSON.stringify(stdin),
-      env: await bridgeEnv($),
-      timeoutMs: COMPACT_TIMEOUT_MS,
-    });
-    if (res.exitCode !== 0) {
-      return fail(`UltraCompress exited ${res.exitCode}: ${excerpt(res.stderr, 300)}`);
+    const run = async (overrides) => {
+      const stdin = { ...buildCompactStdin(messages, { instructions: e.instructions }), ...overrides };
+      const res = await $.process.run([bin, 'compact', '--policy', stdin.policy, '--vision', stdin.vision], {
+        stdin: JSON.stringify(stdin),
+        env: await bridgeEnv($),
+        timeoutMs: COMPACT_TIMEOUT_MS,
+      });
+      if (res.exitCode !== 0) return { error: `UltraCompress exited ${res.exitCode}: ${excerpt(res.stderr, 300)}`, noCut: /no safe cut point/.test(res.stderr ?? '') };
+      try {
+        return { rc: JSON.parse(res.stdout) };
+      } catch (err) {
+        return { error: `bad UltraCompress output: ${err}` };
+      }
+    };
+    // A short or tool-heavy conversation can have no clean place to keep a
+    // tail. Claude's own compaction then summarizes everything, so do the
+    // same locally (keep no turns) rather than hand off to a model call.
+    let attempt = await run({});
+    let cut = -1;
+    if (!attempt.error) {
+      const keptIndex = firstKeptIndexFromId(attempt.rc && attempt.rc.first_kept_entry_id);
+      cut = keptIndex < 0 ? -1 : chooseCut(messages, keptIndex);
     }
-    let rc;
-    try {
-      rc = JSON.parse(res.stdout);
-    } catch (err) {
-      return fail(`bad UltraCompress output: ${err}`);
+    if ((attempt.error && attempt.noCut) || (!attempt.error && cut < 0)) {
+      attempt = await run({ keepUserTurns: 0 });
+      if (!attempt.error) cut = messages.length;
     }
+    if (attempt.error) return fail(attempt.error);
+    const rc = attempt.rc;
     const summary = rc && typeof rc.summary === 'string' ? rc.summary : '';
     if (!summary.trim()) return fail('empty summary');
-    const keptIndex = firstKeptIndexFromId(rc && rc.first_kept_entry_id);
-    if (keptIndex < 0) return fail(`unreadable first_kept_entry_id ${JSON.stringify(rc && rc.first_kept_entry_id)}`);
-    const cut = chooseCut(messages, keptIndex);
     if (cut < 0) return fail(`no clean user-message cut at or after entry ${rc.first_kept_entry_id}`);
 
     const condensed = cut; // summarized = everything before the kept tail (not the kept count)
