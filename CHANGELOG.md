@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.3.0 (unreleased) — Claude Code plugin and transcript recall
+## 0.3.0 (2026-09-23) — Claude Code plugin and transcript recall
+
+Includes **CLI/core 0.3.0**, the **Claude Code plugin 0.3.0** and the unchanged
+**Pi adapter 0.2.2**. Measured against Claude Code's built-in compaction on two
+real sessions: 65 ms instead of 23–52 s, no summary model call, and 12 of 12
+edited files recovered with recall ([docs/BENCHMARKS-CLAUDE.md](docs/BENCHMARKS-CLAUDE.md)).
 
 - New standalone Claude Code plugin under `claude-code/`: a drop-in function
   hooks plugin (`session.compact` + recall tool `mcp__ultracompress__ultracompress_recall`)
