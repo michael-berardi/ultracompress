@@ -425,31 +425,38 @@ fn main_uc(args: &[String]) {
         other => die(&format!("unknown uc mode '{other}' (encode|decode)")),
     };
     use std::io::Write;
-    let mut child = std::process::Command::new(uc_bin)
+    let hint = if sub == "decode" {
+        " Use the uc:<hash> reference if available, or recover the original with ultracompress_recall. Do not abbreviate or reconstruct a packet, and do not retry the same invalid text."
+    } else {
+        ""
+    };
+    // A missing or failing UC engine is reported as the same JSON error as a
+    // rejected packet: UC is optional and callers parse stdout as JSON.
+    let report = |err: &str| println!("{}", json!({ "error": format!("{}{hint}", err.trim()) }));
+    let mut child = match std::process::Command::new(uc_bin)
         .arg(sub)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .unwrap_or_else(|e| die(&format!("cannot spawn uc: {e}")));
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(payload.as_bytes())
-        .unwrap_or_else(|e| die(&e.to_string()));
-    let out = child
-        .wait_with_output()
-        .unwrap_or_else(|e| die(&e.to_string()));
+    {
+        Ok(child) => child,
+        Err(e) => return report(&format!("cannot spawn uc ({uc_bin}): {e}.")),
+    };
+    // Write from a thread so a child that answers before draining stdin
+    // cannot deadlock against a full pipe; a broken pipe just means the
+    // child stopped reading, and its exit status reports why.
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(payload.as_bytes());
+    });
+    let out = match child.wait_with_output() {
+        Ok(out) => out,
+        Err(e) => return report(&format!("uc did not complete: {e}.")),
+    };
+    let _ = writer.join();
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let hint = if sub == "decode" {
-            " Use the uc:<hash> reference if available, or recover the original with ultracompress_recall. Do not abbreviate or reconstruct a packet, and do not retry the same invalid text."
-        } else {
-            ""
-        };
-        println!("{}", json!({ "error": format!("{}{hint}", err.trim()) }));
-        return;
+        return report(&String::from_utf8_lossy(&out.stderr));
     }
     println!(
         "{}",
