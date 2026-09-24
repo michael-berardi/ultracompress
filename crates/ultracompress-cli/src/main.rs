@@ -471,8 +471,9 @@ fn main_stats(args: &[String]) {
         .clone()
         .unwrap_or_else(|| die("stats requires --session FILE"));
     let s = load_session(&path, true).unwrap_or_else(|e| die(&format!("cannot load session: {e}")));
-    let mut by_role: std::collections::HashMap<String, (usize, u64)> =
-        std::collections::HashMap::new();
+    // Ordered by role name: HashMap iteration order varied between runs.
+    let mut by_role: std::collections::BTreeMap<String, (usize, u64)> =
+        std::collections::BTreeMap::new();
     let mut json_blocks = 0usize;
     for m in &s.messages {
         let e = by_role.entry(m.role.to_string()).or_default();
