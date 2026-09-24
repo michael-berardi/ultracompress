@@ -342,16 +342,29 @@ export async function handleCompact($, e, next) {
     // same locally (keep no turns) rather than hand off to a model call.
     let attempt = await run({});
     let cut = -1;
+    let reportedStats;
     if (!attempt.error) {
       const keptIndex = firstKeptIndexFromId(attempt.rc && attempt.rc.first_kept_entry_id);
       cut = keptIndex < 0 ? -1 : chooseCut(messages, keptIndex);
+      if (cut > keptIndex) {
+        // The binary summarized only the messages before its own cut. Moving
+        // the tail forward to a clean user message would drop everything in
+        // between (a tool result and any user text sent with it), so
+        // summarize exactly the messages before the clean cut instead.
+        reportedStats = attempt.rc && attempt.rc.stats;
+        attempt = await run({ entries: toEntries(messages.slice(0, cut)), keepUserTurns: 0 });
+      }
     }
     if ((attempt.error && attempt.noCut) || (!attempt.error && cut < 0)) {
       attempt = await run({ keepUserTurns: 0 });
+      reportedStats = undefined;
       if (!attempt.error) cut = messages.length;
     }
     if (attempt.error) return fail(attempt.error);
     const rc = attempt.rc;
+    // Token estimates describe the whole conversation; a prefix-only rerun
+    // would understate them, so report the full run's estimates.
+    if (reportedStats && typeof reportedStats === 'object') rc.stats = reportedStats;
     const summary = rc && typeof rc.summary === 'string' ? rc.summary : '';
     if (!summary.trim()) return fail('empty summary');
     if (cut < 0) return fail(`no clean user-message cut at or after entry ${rc.first_kept_entry_id}`);
