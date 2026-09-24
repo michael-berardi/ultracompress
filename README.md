@@ -27,7 +27,9 @@ coding agents currently compact, both served by the same engine.
 
 Summary generation by another model call is a strange way to save model calls.
 UltraCompress skips the middleman: compaction runs locally in roughly 10–300
-ms, deterministically, at zero API cost. What it drops stays recoverable,
+ms, deterministically, at zero API cost. In Claude Code that means about 65 ms
+where the built-in summarizer took 23–52 seconds
+([measured](#against-claude-codes-own-compaction)). What it drops stays recoverable,
 ranked recall measured at **94.4% hit@5** on its published fixture
 ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)). Context management should not
 require another context-management agent.
@@ -35,7 +37,8 @@ require another context-management agent.
 ## New in 0.3.0
 
 - **A standalone Claude Code plugin** (`claude-code/`): compaction and recall
-  for Claude Code without UltraTerm — see [Claude Code](#claude-code).
+  for Claude Code without UltraTerm — see [Claude Code](#claude-code) and the
+  [measured comparison](#against-claude-codes-own-compaction).
 - **Native Claude Code transcript recall**: `ultracompress recall` reads
   `~/.claude/projects/**/*.jsonl` directly (`--format auto|pi|claude`), keyed
   by `uuid`/`parentUuid`, crossing compaction boundaries through
@@ -179,9 +182,23 @@ latency, task-cost, and JSON-size measurements are documented in
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md); they are fixture-specific, not
 guaranteed product performance.
 
-**Claude-versus-UltraCompress numbers are being measured now and will be
-published with the release.** Nothing on this page invents them; when the A/B
-run is done, this section is where it lands.
+### Against Claude Code's own compaction
+
+Two real Claude Code sessions (Opus 5.5, 273k and 370k tokens), each compacted
+from an identical copy by Claude's built-in summarizer and by UltraCompress.
+Figures are Claude Code's own counters.
+
+| | Claude built-in | UltraCompress |
+| --- | --- | --- |
+| Compaction time | 23.0 s and 51.9 s | **65 ms and 66 ms** |
+| Tokens sent to a model to write the summary | 273k and 370k | **0** |
+| Context after | 3.2k and 11.4k | 11.3k and 7.9k |
+| Edited files recalled, memory only | 8 of 12 | 8 of 12 |
+| Edited files recovered with recall | — | **12 of 12** |
+
+Roughly 350–800× faster, no model call, and nothing actually lost. Two
+sessions is a small sample; the method, harness and caveats are in
+[docs/BENCHMARKS-CLAUDE.md](docs/BENCHMARKS-CLAUDE.md).
 
 ## Commands (Pi adapter)
 
