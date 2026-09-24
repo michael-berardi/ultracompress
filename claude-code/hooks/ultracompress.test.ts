@@ -219,6 +219,10 @@ test('success hands the summary message first, keeps handles, and reports honest
   expect(stdin.smartKeepTail).toBe(true);
   expect(stdin.vision).toBe('auto');
   expect(stdin.entries.some((en: any) => en.message?.role === 'toolResult')).toBe(true);
+  // The binary kept from m2 (a tool-result message), so the hook reran it over
+  // exactly m0..m2 with keep 0: m2 is summarized, not dropped between the cuts.
+  expect(stdin.keepUserTurns).toBe(0);
+  expect(stdin.entries.every((en: any) => /^m[0-2](:|$)/.test(en.id))).toBe(true);
 
   // m2 is a tool-result user message, so the kept tail starts at the next clean
   // user message (m3); the summary message is built, kept messages keep handles.
