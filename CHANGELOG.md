@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Claude Code plugin: compaction no longer drops messages when the kept tail
+  has to move forward to a clean user message. Previously everything between
+  the binary's cut and that message, typically a tool result plus a
+  requirement the user typed with it, appeared in neither the summary nor the
+  kept tail. The hook now summarizes exactly the messages it does not keep.
+- `ultracompress uc` reports a missing or failing UC engine as a JSON
+  `{"error": ...}` reply with the recovery hint instead of exiting 2 with
+  plain text, as its graceful-degradation contract states.
+- `ultracompress stats` lists roles in a fixed order; the per-role breakdown
+  previously varied between identical runs.
+
 ## 0.3.0 (2026-09-23) — Claude Code plugin and transcript recall
 
 Includes **CLI/core 0.3.0**, the **Claude Code plugin 0.3.0** and the unchanged
