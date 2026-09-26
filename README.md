@@ -1,5 +1,3 @@
-<!-- Suggested GitHub repo topics: context-compaction, claude-code, claude-code-plugin, pi-coding-agent, llm, ai-agents, coding-agent, token-optimization, rust, cli, developer-tools -->
-
 <div align="center">
 
 # UltraCompress
@@ -46,8 +44,7 @@ require another context-management agent.
 
 ## Install
 
-Release: **0.3.0** (this branch; published with the v0.3.0 tag). Building from
-source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
+Current release: **0.3.0**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
 and Node.js 22.19 or newer.
 
 ```sh
@@ -63,9 +60,8 @@ The release also provides a Developer ID-signed, notarized macOS arm64 CLI
 archive and checksums. UltraTerm bundles the bridge with its managed Steak Pi
 runtime. Do not load the standalone extension alongside Steak Pi's copy.
 
-[UltraCompact](https://github.com/michael-berardi/ultracompact) is an optional,
-separately distributed dependency: an available `uc` executable enables UC
-encoding. Without it, VCC compaction and raw-history recall still work. The
+UltraCompact is an optional, separately distributed encoder: when a `uc`
+executable is on `PATH`, UC encoding is enabled. Without it, VCC compaction and raw-history recall still work. The
 adapter falls back to Pi's core compaction when the bridge is unavailable or
 fails.
 
