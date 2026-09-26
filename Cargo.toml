@@ -5,7 +5,12 @@ members = ["crates/ultracompress-core", "crates/ultracompress-cli"]
 [workspace.package]
 version = "0.3.0"
 edition = "2021"
+rust-version = "1.85"
 license = "MIT"
+authors = ["Implose Cybernetics"]
+homepage = "https://github.com/michael-berardi/ultracompress"
+keywords = ["llm", "compaction", "context-window", "ai-agents", "claude-code"]
+categories = ["command-line-utilities", "compression", "development-tools"]
 repository = "https://github.com/michael-berardi/ultracompress"
 description = "UltraCompress — content-aware conversation compaction: VCC briefs, snap frames, UC packets, one policy engine."
 
