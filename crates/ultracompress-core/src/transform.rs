@@ -1,5 +1,5 @@
 //! Live context transforms: per-block routing of oversized tool results to
-//! UC packets or snap frames. This is the path that saves real tokens every
+//! snap frames. This is the path that saves real tokens every
 //! LLM call — the compaction summary is text-only, so frames only pay off
 //! when they replace text that would otherwise sit in the live window.
 
@@ -7,7 +7,6 @@ use crate::classify::Thresholds;
 use crate::model::{parse_messages, Block, RcMessage};
 use crate::policy::{engine_mix, resolve_block, Policy, VisionMode};
 use crate::snap::{plan_snap, render_frames, SnapConfig, SnapResult};
-use crate::ucbridge::UcBridge;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,10 +19,6 @@ pub struct TransformInput {
     pub vision: VisionMode,
     #[serde(default)]
     pub model_vision: Option<bool>,
-    #[serde(default)]
-    pub uc_bin: Option<String>,
-    #[serde(default = "default_true")]
-    pub uc_enabled: bool,
     #[serde(default)]
     pub thresholds: Option<Thresholds>,
     #[serde(default)]
@@ -38,22 +33,9 @@ pub struct TransformInput {
 fn default_policy() -> Policy {
     Policy::Auto
 }
-fn default_true() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum TransformOp {
-    /// Replace one text block with a UC packet + stub.
-    Uc {
-        message_index: usize,
-        block_index: usize,
-        stub: String,
-        packet: String,
-        tokens_before: u64,
-        tokens_after: u64,
-    },
     /// Replace one text block with text edges + PNG frames.
     Snap {
         message_index: usize,
@@ -77,12 +59,10 @@ pub struct FrameOut {
 #[derive(Debug, Clone, Serialize)]
 pub struct TransformStats {
     pub blocks_scanned: usize,
-    pub uc_ops: usize,
     pub snap_ops: usize,
     pub tokens_before: u64,
     pub tokens_after: u64,
     pub savings_pct: f64,
-    pub uc_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +77,6 @@ pub struct TransformResult {
     /// Successful no-gain decisions safe to memoize. Failures are omitted.
     pub no_gain: Vec<BlockPosition>,
     pub stats: TransformStats,
-    pub uc_status: crate::ucbridge::UcStatus,
 }
 
 const DEFAULT_CPT: f64 = 3.8;
@@ -106,24 +85,8 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
     let msgs: Vec<RcMessage> = parse_messages(&serde_json::Value::Array(input.messages.clone()));
     let cpt = input.chars_per_token.unwrap_or(DEFAULT_CPT);
 
-    let mut uc = UcBridge::new(input.uc_bin.as_deref().unwrap_or("uc"));
-    let uc_status = if input.uc_enabled {
-        uc.probe()
-    } else {
-        crate::ucbridge::UcStatus {
-            enabled: false,
-            bin: input.uc_bin.clone().unwrap_or_else(|| "uc".into()),
-            available: false,
-            version: None,
-            reason: Some("uc disabled by config".into()),
-        }
-    };
     let vision = input.vision.resolves(input.model_vision);
-    let mix = engine_mix(
-        input.policy,
-        uc_status.available && input.uc_enabled,
-        vision,
-    );
+    let mix = engine_mix(input.policy, vision);
     let th = input.thresholds.unwrap_or_default();
     let snap_cfg = input.snap.clone().unwrap_or_default();
 
@@ -140,7 +103,7 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                 Block::Text { text } if m.role == crate::model::Role::ToolResult => text,
                 _ => continue,
             };
-            if text.len() < th.uc_min_chars {
+            if text.len() < th.snap_min_chars {
                 continue;
             }
             blocks_scanned += 1;
@@ -153,48 +116,6 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                 cpt,
             );
             match engine {
-                crate::classify::Engine::Uc => {
-                    if let Some(packet) = uc.encode_json(text) {
-                        let before = packet.tokens_source;
-                        let stub = if packet.envelope {
-                            format!(
-                                "[UC packet: text payload in JSON envelope (key \"t\"), {} → {} o200k tokens (packet only), -{:.0}%; decode via ultracompress_uc decode, then use the \"t\" value]",
-                                packet.tokens_source, packet.tokens_uc, packet.savings_pct
-                            )
-                        } else {
-                            format!(
-                                "[UC packet: JSON payload, {} → {} o200k tokens (packet only), -{:.0}%; decode via ultracompress_uc decode]",
-                                packet.tokens_source, packet.tokens_uc, packet.savings_pct
-                            )
-                        };
-                        let Some(after) = uc.count_tokens(&format!("{stub}\n\n{}", packet.packet))
-                        else {
-                            continue;
-                        };
-                        if after >= before {
-                            no_gain.push(BlockPosition {
-                                message_index: mi,
-                                block_index: bi,
-                            });
-                            continue;
-                        }
-                        tokens_before += before;
-                        tokens_after += after;
-                        ops.push(TransformOp::Uc {
-                            message_index: mi,
-                            block_index: bi,
-                            stub,
-                            packet: packet.packet.clone(),
-                            tokens_before: before,
-                            tokens_after: after,
-                        });
-                    } else if uc.no_gain(text) {
-                        no_gain.push(BlockPosition {
-                            message_index: mi,
-                            block_index: bi,
-                        });
-                    }
-                }
                 crate::classify::Engine::Snap => {
                     let plan = plan_snap(text, &snap_cfg, input.image_tokens_per_frame, cpt);
                     if !plan.worthwhile {
@@ -245,10 +166,6 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
     } else {
         0.0
     };
-    let uc_ops = ops
-        .iter()
-        .filter(|o| matches!(o, TransformOp::Uc { .. }))
-        .count();
     let snap_ops = ops
         .iter()
         .filter(|o| matches!(o, TransformOp::Snap { .. }))
@@ -259,14 +176,11 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
         no_gain,
         stats: TransformStats {
             blocks_scanned,
-            uc_ops,
             snap_ops,
             tokens_before,
             tokens_after,
             savings_pct,
-            uc_available: uc_status.available,
         },
-        uc_status,
     })
 }
 
@@ -293,8 +207,6 @@ mod tests {
             policy: Policy::Auto,
             vision: VisionMode::On,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
             thresholds: None,
             snap: None,
             image_tokens_per_frame: None,
@@ -313,7 +225,6 @@ mod tests {
                 assert!(frames[0].png_base64.len() > 100);
                 assert!(!head.is_empty());
             }
-            other => panic!("expected snap op, got {other:?}"),
         }
     }
 
@@ -328,8 +239,6 @@ mod tests {
             policy: Policy::Auto,
             vision: VisionMode::Off,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
             thresholds: None,
             snap: None,
             image_tokens_per_frame: None,

@@ -11,7 +11,7 @@ import * as url from "node:url";
  */
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
-const ULTRACOMPRESS = process.env.UC_TEST_BIN ?? path.join(here, "..", "..", "target", "release", "ultracompress");
+const ULTRACOMPRESS = process.env.ULTRACOMPRESS_BIN ?? path.join(here, "..", "..", "target", "release", "ultracompress");
 const hasBinary = fs.existsSync(ULTRACOMPRESS);
 
 const FIXTURE = [
@@ -55,7 +55,7 @@ describe.skipIf(!hasBinary)("UltraCompress binary e2e", () => {
       modelVision: true,
     });
     expect(r.stats.blocks_scanned).toBe(1);
-    expect(r.stats.snap_ops + r.stats.uc_ops).toBeGreaterThanOrEqual(0);
+    expect(r.stats.snap_ops).toBeGreaterThanOrEqual(0);
     // Either framed (vision) or explicitly kept as text; never both engines.
     expect(r.ops.length).toBeLessThanOrEqual(1);
   });
@@ -64,8 +64,7 @@ describe.skipIf(!hasBinary)("UltraCompress binary e2e", () => {
     const payload = {
       entries: FIXTURE.filter((e) => e.type === "message"),
       previousSummary: "[Session Goal]\n- Preserve bridge sentinel goal\n",
-      keepUserTurns: 0, smartKeepTail: false, ucEnabled: false,
-      ucBin: "missing-explicit-codec", policy: "vcc", vision: "off", modelVision: false,
+      keepUserTurns: 0, smartKeepTail: false, policy: "vcc", vision: "off", modelVision: false,
     };
     const r = runUltraCompress(["compact"], payload);
     expect(r.summary).toContain("Preserve bridge sentinel goal");
@@ -75,18 +74,10 @@ describe.skipIf(!hasBinary)("UltraCompress binary e2e", () => {
     expect(overridden.stats.keep_user_turns_resolved).toBe(1);
   });
 
-  it("honors codec opt-out, binary override, thresholds and explicit CLI precedence", () => {
-    const payload = {
-      messages: [FIXTURE[3]], ucEnabled: false, ucBin: "missing-explicit-codec",
-      ucMinChars: 100000, snapMinChars: 100000, modelVision: false, vision: "auto",
-    };
-    const r = runUltraCompress(["transform"], payload);
-    expect(r.uc_status.bin).toBe("missing-explicit-codec");
-    expect(r.uc_status.enabled).toBe(false);
-    expect(r.stats.blocks_scanned).toBe(0);
-    const overridden = runUltraCompress(["transform", "--uc-min-chars", "1"], payload);
-    expect(overridden.stats.blocks_scanned).toBe(1);
-    expect(overridden.ops).toEqual([]);
+  it("honors snap threshold and CLI precedence", () => {
+    const payload = { messages: [FIXTURE[3]], snapMinChars: 100000, modelVision: true, vision: "on" };
+    expect(runUltraCompress(["transform"], payload).stats.blocks_scanned).toBe(0);
+    expect(runUltraCompress(["transform", "--snap-min-chars", "1"], payload).stats.blocks_scanned).toBe(1);
   });
 
   it("recalls from a raw session file losslessly", () => {
@@ -99,8 +90,4 @@ describe.skipIf(!hasBinary)("UltraCompress binary e2e", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("uc bridge stays graceful when payloads are not JSON", () => {
-    const r = runUltraCompress(["uc", "decode"], { packet: "not a packet" });
-    expect(r.error ?? r.decoded).toBeDefined();
-  });
 });

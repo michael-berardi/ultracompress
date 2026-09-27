@@ -2,29 +2,22 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export interface UcSettings {
-  enabled: boolean;
-  bin: string;
-  minChars: number;
-}
-
 export interface SnapSettings {
   enabled: boolean;
   minChars: number;
   placement: "nextUser" | "inline";
   imageTokensPerFrame: number | null;
   /** Providers whose wire format is proven for inline base64 images.
-   *  Frames are only offered to these; everyone else gets UC + VCC. */
+   *  Frames are only offered to these; everyone else keeps raw text + VCC. */
   providers: string[];
 }
 
 export interface UltraCompressSettings {
-  policy: "auto" | "vcc" | "snap" | "uc";
+  policy: "auto" | "vcc" | "snap";
   overrideDefaultCompaction: boolean;
   smartKeepTail: boolean;
   keepUserTurns: number | null;
   ultracompressBin: string;
-  uc: UcSettings;
   snap: SnapSettings;
   snapshot: { enabled: boolean };
   debug: boolean;
@@ -36,7 +29,6 @@ export const DEFAULT_SETTINGS: UltraCompressSettings = {
   smartKeepTail: true,
   keepUserTurns: null,
   ultracompressBin: "",
-  uc: { enabled: true, bin: "uc", minChars: 1200 },
   snap: { enabled: true, minChars: 6000, placement: "nextUser", imageTokensPerFrame: null, providers: ["anthropic", "google"] },
   snapshot: { enabled: true },
   debug: false,
@@ -62,12 +54,6 @@ export function mergeSettings(raw: unknown): UltraCompressSettings {
   // One-release migration alias; new files always write ultracompressBin.
   else if (typeof obj.rcBin === "string") out.ultracompressBin = obj.rcBin;
   if (typeof obj.debug === "boolean") out.debug = obj.debug;
-  if (obj.uc && typeof obj.uc === "object") {
-    const uc = obj.uc as Record<string, unknown>;
-    if (typeof uc.enabled === "boolean") out.uc.enabled = uc.enabled;
-    if (typeof uc.bin === "string") out.uc.bin = uc.bin;
-    if (typeof uc.minChars === "number") out.uc.minChars = Math.max(0, uc.minChars);
-  }
   if (obj.snap && typeof obj.snap === "object") {
     const snap = obj.snap as Record<string, unknown>;
     if (typeof snap.enabled === "boolean") out.snap.enabled = snap.enabled;
@@ -87,7 +73,7 @@ export function mergeSettings(raw: unknown): UltraCompressSettings {
 }
 
 function isPolicy(v: unknown): v is UltraCompressSettings["policy"] {
-  return v === "auto" || v === "vcc" || v === "snap" || v === "uc";
+  return v === "auto" || v === "vcc" || v === "snap";
 }
 
 /** Load settings, scaffolding the file with defaults on first run. */

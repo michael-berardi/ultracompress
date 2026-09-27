@@ -4,16 +4,13 @@
 //! branch entries (raw Pi session-entry shapes), calibration data, and the
 //! previous summary; it returns a ready-to-save compaction result.
 
-use crate::classify::Thresholds;
 use crate::estimate::{calibrate, tokens_from_chars};
 use crate::format::{merge, render, PreviousSummary};
-use crate::model::{parse_message, Block, RcMessage};
-use crate::policy::{engine_mix, Policy, VisionMode};
+use crate::model::{parse_message, RcMessage};
+use crate::policy::{Policy, VisionMode};
 use crate::sections::{extract, Sections};
 use crate::snap::SnapConfig;
 use crate::transcript::{build as build_transcript, TranscriptConfig};
-use crate::ucbridge::UcBridge;
-use crate::ucbridge::UcPacket;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,12 +34,6 @@ pub struct CompactInput {
     #[serde(default)]
     pub model_vision: Option<bool>,
     #[serde(default)]
-    pub uc_bin: Option<String>,
-    #[serde(default)]
-    pub uc_enabled: bool,
-    #[serde(default)]
-    pub thresholds: Option<Thresholds>,
-    #[serde(default)]
     pub snap: Option<SnapConfig>,
     #[serde(default)]
     pub transcript: Option<TranscriptConfig>,
@@ -64,18 +55,6 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BlockDecision {
-    pub message_index: usize,
-    pub tool: String,
-    pub chars: usize,
-    pub engine: crate::classify::Engine,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uc_savings_pct: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frames: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct CompactStats {
     pub tokens_before_est: u64,
     pub tokens_after_est: u64,
@@ -84,8 +63,6 @@ pub struct CompactStats {
     pub kept_messages: usize,
     pub keep_user_turns_resolved: usize,
     pub smart_keep_adjusted: bool,
-    pub uc_blocks: usize,
-    pub uc_tokens_saved: u64,
     pub snap_blocks: usize,
     pub snap_frames: usize,
     pub snap_chars_archived: u64,
@@ -97,10 +74,8 @@ pub struct CompactStats {
 pub struct CompactResult {
     pub summary: String,
     pub first_kept_entry_id: String,
-    pub decisions: Vec<BlockDecision>,
     pub details: serde_json::Value,
     pub stats: CompactStats,
-    pub uc_status: crate::ucbridge::UcStatus,
     pub policy: Policy,
     pub dry_run: bool,
 }
@@ -356,10 +331,6 @@ pub fn apply_tail_budget(
     )
 }
 
-/// Critical-context heuristic: the most recent UC packet in the summarized
-/// span inlines into the summary; older ones become archive notes.
-const INLINE_UC_MAX_TOKENS: u64 = 1200;
-
 pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     let (live, ids) = collect_live(&input.entries);
 
@@ -395,116 +366,9 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         ids.get(cut.first_kept_index).cloned().unwrap_or_default()
     };
 
-    // Engine availability.
-    let mut uc = UcBridge::new(input.uc_bin.as_deref().unwrap_or("uc"));
-    let uc_status = if input.uc_enabled {
-        uc.probe()
-    } else {
-        crate::ucbridge::UcStatus {
-            enabled: false,
-            bin: input.uc_bin.clone().unwrap_or_else(|| "uc".into()),
-            available: false,
-            version: None,
-            reason: Some("uc disabled by config".into()),
-        }
-    };
-    let vision = input.vision.resolves(input.model_vision);
-    let mix = engine_mix(
-        input.policy,
-        uc_status.available && input.uc_enabled,
-        vision,
-    );
-    let th = input.thresholds.unwrap_or_default();
-
     let tr_cfg = input.transcript.clone().unwrap_or_default();
 
     let summarized = &live[..cut.summarize_end];
-
-    // Route tool results: UC-only in summaries (snap belongs to the live path).
-    let mut decisions: Vec<BlockDecision> = Vec::new();
-    let mut uc_inline: Vec<(usize, UcPacket)> = Vec::new();
-    let mut uc_notes: Vec<String> = Vec::new();
-
-    for (i, m) in summarized.iter().enumerate() {
-        for b in &m.content {
-            if let Block::ToolResult {
-                tool_name, text, ..
-            } = b
-            {
-                if text.len() < th.uc_min_chars {
-                    continue;
-                }
-                let engine = if mix.uc
-                    && crate::classify::classify_content(text)
-                        == crate::classify::ContentClass::Json
-                {
-                    crate::classify::Engine::Uc
-                } else {
-                    crate::classify::Engine::None
-                };
-                let mut decision = BlockDecision {
-                    message_index: i,
-                    tool: if tool_name.is_empty() {
-                        "tool".into()
-                    } else {
-                        tool_name.clone()
-                    },
-                    chars: text.len(),
-                    engine,
-                    uc_savings_pct: None,
-                    frames: None,
-                };
-                if engine == crate::classify::Engine::Uc {
-                    if let Some(packet) = uc.encode_json(text) {
-                        decision.uc_savings_pct = Some(packet.savings_pct);
-                        uc_inline.push((i, packet));
-                    } else {
-                        decision.engine = crate::classify::Engine::None;
-                    }
-                }
-                decisions.push(decision);
-            }
-        }
-    }
-
-    // Readable packets may inline. Dense packets require exact tool retrieval,
-    // not model transcription; archive notes direct the agent to raw history.
-    let mut critical: Vec<String> = Vec::new();
-    let mut uc_blocks = 0usize;
-    let mut uc_tokens_saved: u64 = 0;
-    if !uc_inline.is_empty() {
-        let (_, last) = uc_inline.last().unwrap().clone();
-        if last.tokens_uc <= INLINE_UC_MAX_TOKENS && !last.packet.starts_with("@UC1 c=z") {
-            let kind = if last.envelope {
-                "text payload in JSON envelope (key \"t\")"
-            } else {
-                "JSON payload"
-            };
-            critical.push(format!(
-                "[UC packet — most recent {kind} ({} → {} tokens, -{:.0}%); decode via ultracompress_uc decode]",
-                last.tokens_source,
-                last.tokens_uc,
-                last.savings_pct
-            ));
-            critical.push(last.packet.clone());
-            uc_blocks += 1;
-            // This is packet-only accounting; total compaction savings include notes/stubs.
-            uc_tokens_saved += last.tokens_source.saturating_sub(last.tokens_uc);
-            uc_inline.pop();
-        }
-        for (_, p) in &uc_inline {
-            let kind = if p.envelope {
-                "text payload (envelope key \"t\")"
-            } else {
-                "JSON payload"
-            };
-            uc_notes.push(format!(
-                "[ultracompress-archive uc: {kind}, {}→{} tokens (-{:.0}% packet-only). Original is in raw session history: use ultracompress_recall. No packet is included in this note; do not reconstruct one.]",
-                p.tokens_source, p.tokens_uc, p.savings_pct
-            ));
-            // No packet is shipped here: do not count hypothetical codec savings.
-        }
-    }
 
     // Sections + transcript + merge + render.
     let mut new_sections = extract(summarized);
@@ -517,11 +381,10 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     if let Some(p) = &prev {
         archived.extend(p.archived_notes.iter().cloned());
     }
-    archived.extend(uc_notes);
     new_sections = merged;
 
     let transcript = build_transcript(summarized, &tr_cfg);
-    let summary = render(&new_sections, &transcript, &archived, &critical);
+    let summary = render(&new_sections, &transcript, &archived, &[]);
 
     // Token accounting. Snap frames are a live-path concern; compaction
     // savings come from the summary alone. The kept tail's savings via live
@@ -543,18 +406,15 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         0.0
     };
 
-    let (uc_encodes, uc_hits) = uc.cache_stats();
     let details = serde_json::json!({
         "compactor": "ultracompress",
         "version": env!("CARGO_PKG_VERSION"),
         "policy": input.policy,
-        "engines": { "uc": mix.uc && uc_status.available, "snap": mix.snap },
-        "sections": section_names(&new_sections, &archived, &critical, &transcript),
+        "sections": section_names(&new_sections, &archived, &[], &transcript),
         "sourceMessageCount": summarized.len(),
         "previousSummaryUsed": prev.is_some(),
         "transcriptLines": transcript.lines.len(),
         "transcriptOmitted": transcript.omitted_lines,
-        "ucCache": { "encodes": uc_encodes, "hits": uc_hits },
         "budgetCut": budget_cut,
         "explicitKeep": explicit,
     });
@@ -562,7 +422,6 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     Ok(CompactResult {
         summary,
         first_kept_entry_id,
-        decisions,
         details,
         stats: CompactStats {
             tokens_before_est,
@@ -572,15 +431,12 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
             kept_messages: live.len().saturating_sub(cut.summarize_end),
             keep_user_turns_resolved: keep,
             smart_keep_adjusted: smart_adjusted,
-            uc_blocks,
-            uc_tokens_saved,
             snap_blocks: 0,
             snap_frames: 0,
             snap_chars_archived: 0,
             chars_per_token: cpt,
             calibrated: est.calibrated,
         },
-        uc_status,
         policy: input.policy,
         dry_run: input.dry_run,
     })
@@ -630,6 +486,7 @@ fn section_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Block;
     use serde_json::json;
 
     fn entry(id: &str, parent: &str, role: &str, text: &str) -> serde_json::Value {
@@ -717,9 +574,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::On,
             model_vision: None,
-            uc_bin: Some("rc-definitely-not-a-binary".into()),
-            uc_enabled: true,
-            thresholds: None,
             snap: Some(SnapConfig {
                 cols: 100,
                 rows: 30,
@@ -753,9 +607,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::Off,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
-            thresholds: None,
             snap: None,
             transcript: None,
             image_tokens_per_frame: None,
@@ -808,9 +659,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::On,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: true,
-            thresholds: None,
             snap: None,
             transcript: None,
             image_tokens_per_frame: None,
@@ -818,7 +666,6 @@ mod tests {
         };
         let r = run(&input).unwrap();
         assert_eq!(r.stats.snap_blocks, 0);
-        assert_eq!(r.stats.uc_blocks, 0);
         assert!(r.summary.contains("[Transcript]"));
     }
 
@@ -834,9 +681,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::Off,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
-            thresholds: None,
             snap: None,
             transcript: None,
             image_tokens_per_frame: None,
@@ -888,9 +732,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::Off,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
-            thresholds: None,
             snap: None,
             transcript: None,
             image_tokens_per_frame: None,
@@ -916,9 +757,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::On,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
-            thresholds: None,
             snap: None,
             transcript: None,
             image_tokens_per_frame: None,
@@ -949,9 +787,6 @@ mod tests {
             smart_keep_tail: false,
             vision: VisionMode::Off,
             model_vision: None,
-            uc_bin: None,
-            uc_enabled: false,
-            thresholds: None,
             snap: None,
             transcript: None,
             image_tokens_per_frame: None,

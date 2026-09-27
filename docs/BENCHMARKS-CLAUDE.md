@@ -61,7 +61,7 @@ What this says:
    content leaves the machine.
 
 Run: `AB_DIR=/private/results TMUX_BIN=tmux scripts/claude-ab/arm.sh <id-prefix>
-uc|stock`, then delete the transcript copies it made.
+ultracompress|stock`, then delete the transcript copies it made.
 
 ## Caveats
 

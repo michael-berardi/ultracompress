@@ -1,6 +1,7 @@
 # UltraCompress — Benchmarks
 
-All numbers reproducible from this repo. Three benchmark families:
+Historical measurements from before the optional codec removal; rerun to measure
+the current VCC/snap-only behavior. Three benchmark families:
 
 1. **Offline** (`scripts/bench-offline.mjs`) — deterministic, zero API cost.
    Real recorded Pi sessions ≥ 40k tokens (below that, compaction never
@@ -49,7 +50,6 @@ every byte recoverable and spending zero API cost. The differentiators:
 | Compaction API cost | 1 LLM call per compaction | **$0** | **$0** |
 | Raw history after compaction | retained in session files | retained, ranked recall | retained, ranked recall |
 | Recall hit@5 in this fixture | not measured | 94.4% | **94.4%** |
-| JSON payloads in context | verbatim | verbatim | UC packets (−26%+ tokens, lossless) |
 | Bulky text tool output | verbatim every turn | verbatim every turn | snap frames (vision providers) |
 | Repeat compactions | degrade (summary of summary) | stable (sticky sections) | stable (sticky sections + key facts) |
 
@@ -104,15 +104,13 @@ Findings:
   a heavy token price.
 - **Provider reality check**: z.ai's coding endpoint rejects standard OpenAI
   image parts, so snap frames are provider-gated (anthropic/google by
-  default). On zai, UltraCompress runs VCC + UC — and still wins on cost,
-  latency, and information retention.
+  default). On zai, UltraCompress runs VCC without snap frames.
 
 ## 4. Engineering-quality gates
 
 - 40 Rust unit/golden tests + 32 extension tests (incl. live-binary e2e)
 - Determinism: same session + same config ⇒ byte-identical summary
-- Never-worse rule: UC packets ship only when UC reports real savings; snap
-  frames only when line-aware economics beat text by ≥ 25%
+- Snap frames only ship when line-aware economics beat text by ≥ 25%
 - Fallback-first: every UltraCompress call is best-effort; any failure degrades to Pi
   core compaction — a session can never be bricked by the extension
 

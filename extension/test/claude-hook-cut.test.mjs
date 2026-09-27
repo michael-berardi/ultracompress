@@ -12,7 +12,7 @@ import { handleCompact } from "../../claude-code/hooks/ultracompress.mjs";
  */
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
-const ULTRACOMPRESS = process.env.UC_TEST_BIN ?? path.join(here, "..", "..", "target", "release", "ultracompress");
+const ULTRACOMPRESS = process.env.ULTRACOMPRESS_BIN ?? path.join(here, "..", "..", "target", "release", "ultracompress");
 const hasBinary = fs.existsSync(ULTRACOMPRESS);
 
 function hookHost() {

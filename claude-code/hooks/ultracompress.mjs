@@ -10,11 +10,11 @@
  *   $ULTRACOMPRESS_BIN, $HOME/.local/bin/ultracompress,
  *   $HOME/.ultraterm/bin/ultracompress, /opt/homebrew/bin/ultracompress,
  *   /usr/local/bin/ultracompress
- *   argv   compact --policy <auto|vcc|snap|uc> --vision <auto|on|off>
+ *   argv   compact --policy <auto|vcc|snap> --vision <auto|on|off>
  *   stdin  { entries, tokensBefore?, previousSummary?, policy, keepUserTurns,
- *            smartKeepTail, vision, modelVision, ucBin, ucEnabled, ucMinChars,
+ *            smartKeepTail, vision, modelVision,
  *            snapMinChars }
- *   stdout { summary, first_kept_entry_id, details, stats, uc_status }
+ *   stdout { summary, first_kept_entry_id, details, stats }
  *
  * Recall contract: the binary reads Claude Code transcripts natively
  * (`recall --session <transcript.jsonl> --format claude`), so the recall tool
@@ -52,9 +52,6 @@ const COMPACT_DEFAULTS = {
   smartKeepTail: true,
   vision: 'auto',
   modelVision: null,
-  ucBin: 'uc',
-  ucEnabled: true,
-  ucMinChars: 8192,
   snapMinChars: 8192,
 };
 
@@ -80,8 +77,7 @@ const RECALL_TOOL = {
     'the current branch since the last compaction. Never scans other sessions; supply sessionFile ' +
     'explicitly for one. Narrow by role, tool, entry range and bounded excerpts. ' +
     'Results identify the searched session, scope and message count; no automatic widening. ' +
-    'Archived oversized tool outputs appear as [UC uc:<64hex>] markers; a marker reference is bounded session-local ' +
-    "memory — when a marker's original text is no longer reachable, search for the text here by its distinctive " +
+    'Older session markers may refer to original text; use recall to search by distinctive ' +
     'words instead of retrying or inventing a packet.',
   inputSchema: {
     type: 'object',
@@ -201,7 +197,7 @@ export function toEntries(messages) {
 /** `/compact keep:2 policy:vcc rest…` -> { keep: 2, policy: 'vcc' } (Pi parseUltraCompressArgs). */
 export function parseInstructions(raw) {
   const keepMatch = /(?:^|\s)keep:(\d+)(?=\s|$)/.exec(raw ?? '');
-  const policyMatch = /(?:^|\s)policy:(auto|vcc|snap|uc)(?=\s|$)/.exec(raw ?? '');
+  const policyMatch = /(?:^|\s)policy:(auto|vcc|snap)(?=\s|$)/.exec(raw ?? '');
   return {
     keep: keepMatch ? Math.max(0, parseInt(keepMatch[1], 10)) : null,
     policy: policyMatch ? policyMatch[1] : null,
@@ -278,17 +274,6 @@ export function buildCompactStdin(messages, overrides) {
   return stdin;
 }
 
-/** Telemetry opt-in parity with the Pi bridge (env overlays over the host environment). */
-async function bridgeEnv($) {
-  const env = { UC_TEXT_ENVELOPES: '1' };
-  try {
-    const tele = await $.env.get('UC_TELEMETRY');
-    const path = await $.env.get('UC_TELEMETRY_PATH');
-    if (tele === undefined && path === undefined) env.UC_TELEMETRY = '1';
-  } catch {}
-  return env;
-}
-
 function excerpt(text, max) {
   const line = String(text ?? '').trim();
   return line.length > max ? `${line.slice(0, max)}…` : line;
@@ -327,7 +312,6 @@ export async function handleCompact($, e, next) {
       const stdin = { ...buildCompactStdin(messages, { instructions: e.instructions }), ...overrides };
       const res = await $.process.run([bin, 'compact', '--policy', stdin.policy, '--vision', stdin.vision], {
         stdin: JSON.stringify(stdin),
-        env: await bridgeEnv($),
         timeoutMs: COMPACT_TIMEOUT_MS,
       });
       if (res.exitCode !== 0) return { error: `UltraCompress exited ${res.exitCode}: ${excerpt(res.stderr, 300)}`, noCut: /no safe cut point/.test(res.stderr ?? '') };
@@ -508,7 +492,6 @@ export async function handleRecallCall($, e) {
     const transcript = await resolveTranscript($, params.sessionFile);
     const argv = recallArgvFrom(params, transcript);
     const res = await $.process.run([bin, ...argv], {
-      env: await bridgeEnv($),
       timeoutMs: COMPACT_TIMEOUT_MS,
     });
     if (res.exitCode !== 0) {

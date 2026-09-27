@@ -10,7 +10,7 @@
  * Modes compared:
  *   stock-pi   LLM summary (~1.2k tok est) + 20k-token verbatim tail,
  *              history destroyed (no recall)
- *   vcc-only   ultracompress compact --policy vcc   (deterministic brief, no UC/snap)
+ *   vcc-only   ultracompress compact --policy vcc   (deterministic brief, VCC only)
  *   ultracompress-auto    ultracompress compact (auto) + live transforms on the kept tail
  *
  * Usage: node scripts/bench-offline.mjs [--bin path/to/rc] [--out docs/bench.json]

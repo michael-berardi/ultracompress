@@ -3,13 +3,12 @@
 //! Subcommands:
 //!   ultracompress plan        dry-run: policy decisions + token estimates, no frames
 //!   ultracompress compact     full compaction result (summary, details, stats)
-//!   ultracompress transform   live-context ops: UC packets + snap frames per block
+//!   ultracompress transform   live-context snap frames per block
 //!   ultracompress recall      ranked lossless search over a raw session JSONL
 //!                              (Pi sessions and Claude Code transcripts;
 //!                              `--format auto|pi|claude`, default auto)
 //!   ultracompress stats       per-role content breakdown of a session
 //!   ultracompress frames      render text to PNG frames (debugging / standalone use)
-//!   ultracompress uc          UC packet encode/decode bridge (degrades to plain JSON)
 //!   ultracompress version     print version
 //!
 //! Input: `--session FILE` (Pi session JSONL or Claude Code transcript) or
@@ -44,7 +43,6 @@ fn main() {
         "transform" => main_transform(&args[1..]),
         "recall" => main_recall(&args[1..]),
         "stats" => main_stats(&args[1..]),
-        "uc" => main_uc(&args[1..]),
         "frames" => main_frames(&args[1..]),
         other => die(&format!("unknown command '{other}'")),
     }
@@ -56,10 +54,7 @@ struct Cli {
     keep: Option<usize>,
     smart: bool,
     vision: VisionMode,
-    uc_bin: String,
-    uc_enabled: bool,
     snap_min: usize,
-    uc_min: usize,
     cols: usize,
     rows: usize,
     query: Option<String>,
@@ -79,10 +74,7 @@ fn parse_cli(args: &[String]) -> Cli {
         keep: None,
         smart: true,
         vision: VisionMode::Auto,
-        uc_bin: "uc".into(),
-        uc_enabled: true,
         snap_min: 6000,
-        uc_min: 1200,
         cols: 160,
         rows: 100,
         query: None,
@@ -107,7 +99,7 @@ fn parse_cli(args: &[String]) -> Cli {
             "--session" => c.session = Some(PathBuf::from(val(&mut i))),
             "--policy" => {
                 c.policy = Policy::parse(&val(&mut i))
-                    .unwrap_or_else(|| die("bad --policy (auto|vcc|snap|uc)"))
+                    .unwrap_or_else(|| die("bad --policy (auto|vcc|snap)"))
             }
             "--keep-user-turns" => {
                 c.keep = Some(
@@ -131,11 +123,6 @@ fn parse_cli(args: &[String]) -> Cli {
                     "off" => VisionMode::Off,
                     _ => VisionMode::Auto,
                 }
-            }
-            "--uc-bin" => c.uc_bin = val(&mut i),
-            "--no-uc" => c.uc_enabled = false,
-            "--uc-min-chars" => {
-                c.uc_min = val(&mut i).parse().unwrap_or_else(|_| die("bad number"))
             }
             "--snap-min-chars" => {
                 c.snap_min = val(&mut i).parse().unwrap_or_else(|_| die("bad number"))
@@ -263,21 +250,6 @@ fn apply_stdin_settings(cli: &mut Cli, v: &Value, args: &[String]) {
             cli.smart = value;
         }
     }
-    if !has(&["--uc-bin"]) {
-        if let Some(value) = stdin_setting(v, "ucBin") {
-            cli.uc_bin = value;
-        }
-    }
-    if !has(&["--no-uc"]) {
-        if let Some(value) = stdin_setting(v, "ucEnabled") {
-            cli.uc_enabled = value;
-        }
-    }
-    if !has(&["--uc-min-chars"]) {
-        if let Some(value) = stdin_setting(v, "ucMinChars") {
-            cli.uc_min = value;
-        }
-    }
     if !has(&["--snap-min-chars"]) {
         if let Some(value) = stdin_setting(v, "snapMinChars") {
             cli.snap_min = value;
@@ -304,12 +276,6 @@ fn main_plan(args: &[String], dry: bool) {
         smart_keep_tail: cli.smart,
         vision: cli.vision,
         model_vision: stdin_setting(&settings, "modelVision"),
-        uc_bin: Some(cli.uc_bin.clone()),
-        uc_enabled: cli.uc_enabled,
-        thresholds: Some(ultracompress_core::classify::Thresholds {
-            uc_min_chars: cli.uc_min,
-            snap_min_chars: cli.snap_min,
-        }),
         snap: Some(SnapConfig {
             cols: cli.cols,
             rows: cli.rows,
@@ -353,10 +319,7 @@ fn main_transform(args: &[String]) {
         policy: cli.policy,
         vision: cli.vision,
         model_vision: v.get("modelVision").and_then(|m| m.as_bool()),
-        uc_bin: Some(cli.uc_bin.clone()),
-        uc_enabled: cli.uc_enabled,
         thresholds: Some(ultracompress_core::classify::Thresholds {
-            uc_min_chars: cli.uc_min,
             snap_min_chars: cli.snap_min,
         }),
         snap: Some(SnapConfig::default()),
@@ -399,68 +362,6 @@ fn main_recall(args: &[String]) {
     println!(
         "{}",
         serde_json::to_string(&result).unwrap_or_else(|e| die(&e.to_string()))
-    );
-}
-
-fn main_uc(args: &[String]) {
-    let mode = args.first().map(|s| s.as_str()).unwrap_or("decode");
-    let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
-    // Accept either { "packet": "..." } JSON or raw packet text on stdin.
-    let input = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
-    let payload = input
-        .as_ref()
-        .and_then(|v| v.get("packet"))
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
-        .unwrap_or_else(|| String::from_utf8_lossy(&bytes).to_string());
-    // Match the encoder's configured binary instead of silently using another PATH entry.
-    let uc_bin = input
-        .as_ref()
-        .and_then(|v| v.get("ucBin"))
-        .and_then(|v| v.as_str())
-        .filter(|bin| !bin.is_empty())
-        .unwrap_or("uc");
-    let sub = match mode {
-        "encode" | "decode" => mode,
-        other => die(&format!("unknown uc mode '{other}' (encode|decode)")),
-    };
-    use std::io::Write;
-    let hint = if sub == "decode" {
-        " Use the uc:<hash> reference if available, or recover the original with ultracompress_recall. Do not abbreviate or reconstruct a packet, and do not retry the same invalid text."
-    } else {
-        ""
-    };
-    // A missing or failing UC engine is reported as the same JSON error as a
-    // rejected packet: UC is optional and callers parse stdout as JSON.
-    let report = |err: &str| println!("{}", json!({ "error": format!("{}{hint}", err.trim()) }));
-    let mut child = match std::process::Command::new(uc_bin)
-        .arg(sub)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => return report(&format!("cannot spawn uc ({uc_bin}): {e}.")),
-    };
-    // Write from a thread so a child that answers before draining stdin
-    // cannot deadlock against a full pipe; a broken pipe just means the
-    // child stopped reading, and its exit status reports why.
-    let mut stdin = child.stdin.take().expect("piped stdin");
-    let writer = std::thread::spawn(move || {
-        let _ = stdin.write_all(payload.as_bytes());
-    });
-    let out = match child.wait_with_output() {
-        Ok(out) => out,
-        Err(e) => return report(&format!("uc did not complete: {e}.")),
-    };
-    let _ = writer.join();
-    if !out.status.success() {
-        return report(&String::from_utf8_lossy(&out.stderr));
-    }
-    println!(
-        "{}",
-        json!({ "decoded": String::from_utf8_lossy(&out.stdout) })
     );
 }
 

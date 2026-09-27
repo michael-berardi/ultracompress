@@ -4,17 +4,15 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContentClass {
-    /// Parseable JSON object/array — UC engine territory.
+    /// Parseable JSON object/array.
     Json,
-    /// Plain text — VCC transcript / snap-frame territory; with UC available
-    /// it can also ship as an envelope packet (see route_tool_result).
     Text,
     /// Already an image or opaque payload — leave alone.
     Opaque,
     Empty,
 }
 
-/// Sniff whether a tool result is a JSON payload worth UC-encoding.
+/// Sniff whether a tool result is a JSON payload.
 /// Must parse cleanly AND be non-trivial (constants waste a subprocess call).
 /// Uses `IgnoredAny` so validation never builds a value tree — O(bytes),
 /// no allocation blowup on megabyte payloads.
@@ -37,8 +35,6 @@ pub fn classify_content(text: &str) -> ContentClass {
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct Thresholds {
-    /// Minimum chars before UC encoding is attempted (default 1200).
-    pub uc_min_chars: usize,
     /// Minimum chars before a text tool result is snap-framed (default 6000).
     pub snap_min_chars: usize,
 }
@@ -46,7 +42,6 @@ pub struct Thresholds {
 impl Default for Thresholds {
     fn default() -> Self {
         Thresholds {
-            uc_min_chars: 1_200,
             snap_min_chars: 6_000,
         }
     }
@@ -56,41 +51,9 @@ impl Default for Thresholds {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Engine {
-    Uc,
     Snap,
     Vcc,
     None,
-}
-
-/// Route one tool-result payload.
-pub fn route_tool_result(
-    text: &str,
-    uc_available: bool,
-    vision_capable: bool,
-    th: &Thresholds,
-) -> (Engine, ContentClass) {
-    let class = classify_content(text);
-    match class {
-        ContentClass::Empty | ContentClass::Opaque => (Engine::None, class),
-        ContentClass::Json => {
-            if uc_available && text.len() >= th.uc_min_chars {
-                (Engine::Uc, class)
-            } else {
-                (Engine::None, class)
-            }
-        }
-        ContentClass::Text => {
-            if vision_capable && text.len() >= th.snap_min_chars {
-                (Engine::Snap, class)
-            } else if uc_available && text.len() >= th.uc_min_chars {
-                // 0.1.1: the bridge wraps plain text in a {"t": …} envelope,
-                // so oversized text compresses even without vision.
-                (Engine::Uc, class)
-            } else {
-                (Engine::None, class)
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -108,18 +71,5 @@ mod tests {
         assert_eq!(classify_content("cargo test output…"), ContentClass::Text);
         assert_eq!(classify_content("{broken json"), ContentClass::Text);
         assert_eq!(classify_content(""), ContentClass::Empty);
-    }
-
-    #[test]
-    fn routing_matrix() {
-        let th = Thresholds::default();
-        let json = serde_json::to_string(&serde_json::json!({"k": "x".repeat(2000)})).unwrap();
-        let text = "a".repeat(7000);
-        assert_eq!(route_tool_result(&json, true, true, &th).0, Engine::Uc);
-        assert_eq!(route_tool_result(&json, false, true, &th).0, Engine::None);
-        assert_eq!(route_tool_result(&text, true, true, &th).0, Engine::Snap);
-        assert_eq!(route_tool_result(&text, true, false, &th).0, Engine::Uc);
-        assert_eq!(route_tool_result(&text, false, false, &th).0, Engine::None);
-        assert_eq!(route_tool_result("tiny", true, true, &th).0, Engine::None);
     }
 }

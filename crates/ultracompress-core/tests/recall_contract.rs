@@ -8,7 +8,7 @@ struct Fixture(PathBuf);
 impl Fixture {
     fn new(id: &str, records: Vec<serde_json::Value>) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "uc-recall-{}-{}.jsonl",
+            "ultracompress-recall-{}-{}.jsonl",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

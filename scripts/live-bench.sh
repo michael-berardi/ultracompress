@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live compaction benchmark: identical task, three compaction stacks.
 #   stock-pi : Pi core LLM-summary compaction
-#   ultracompress : Pi + ultracompress extension (VCC brief + snap frames + UC)
+#   ultracompress : Pi + ultracompress extension (VCC brief + snap frames)
 #   omp      : Oh My Pi forced to snapcompact-only (toolResults on, auto shape)
 #
 # Metrics per run: billed input tokens (incl. cache reads), output tokens,

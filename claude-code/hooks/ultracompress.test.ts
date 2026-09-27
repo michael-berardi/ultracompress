@@ -85,12 +85,10 @@ const RC = {
     kept_messages: 3,
     keep_user_turns_resolved: 2,
     smart_keep_adjusted: false,
-    uc_blocks: 0,
     snap_blocks: 0,
     chars_per_token: 4,
     calibrated: false,
   },
-  uc_status: { available: true },
 };
 
 test('toEntries maps text, tool calls and tool results into Pi entries with stable ids', () => {
@@ -161,11 +159,11 @@ test('missing binary, bad output, or empty summary degrade to stock compaction v
   const failed = mock$({
     home: '/home/x',
     stat: { kind: 'file', size: 1, mtimeMs: 0, isLink: false },
-    run: async () => ({ exitCode: 1, stdout: '', stderr: 'uc: bad payload' }),
+    run: async () => ({ exitCode: 1, stdout: '', stderr: 'bridge: bad payload' }),
   });
   const outFailed = await handleCompact(failed.$, { trigger: 'auto', messages }, next);
   expect(outFailed).toEqual({ messages: ['stock'], via: 'next' });
-  expect(failed.logs.join('\n')).toContain('uc: bad payload');
+  expect(failed.logs.join('\n')).toContain('bridge: bad payload');
 
   // Unparseable stdout.
   const junk = mock$({
@@ -358,11 +356,11 @@ test('recall tool.call runs the binary directly on the resolved transcript', asy
   };
 
   // Explicit sessionFile; the binary comes from $ULTRACOMPRESS_BIN.
-  const explicit = mock$({ stat: () => FILE, run, env: { ULTRACOMPRESS_BIN: '/opt/uc/bin/ultracompress' } });
+  const explicit = mock$({ stat: () => FILE, run, env: { ULTRACOMPRESS_BIN: '/opt/tools/bin/ultracompress' } });
   const outExplicit: any = await handleRecallCall(explicit.$, { sessionFile: '/t/other.jsonl', query: 'lost key' });
   expect(outExplicit).toEqual({ result: '{"total":1}' });
   expect(runCalls[0].argv).toEqual([
-    '/opt/uc/bin/ultracompress', 'recall', '--session', '/t/other.jsonl', '--format', 'claude',
+    '/opt/tools/bin/ultracompress', 'recall', '--session', '/t/other.jsonl', '--format', 'claude',
     '--query', 'lost key', '--scope', 'all', '--snippet-bytes', '4000',
   ]);
 
@@ -383,14 +381,13 @@ test('recall tool.call runs the binary directly on the resolved transcript', asy
     '/home/x/.local/bin/ultracompress', 'recall', '--session', '/cfg/claude/projects/-tmp-My-Dir/s-1.jsonl',
     '--format', 'claude', '--query', 'plan', '--scope', 'lineage',
   ]);
-  expect(runCalls[1].init.env.UC_TEXT_ENVELOPES).toBe('1');
   expect(runCalls[1].init.env.CLAUDE_CONFIG_DIR).toBeUndefined();
   expect(runCalls[1].init.timeoutMs).toBe(30_000);
 
   // A failed binary run degrades to a readable failure, never a throw.
-  const bad = mock$({ stat: () => FILE, run: async () => ({ exitCode: 2, stdout: '', stderr: 'uc: bad scope' }) });
+  const bad = mock$({ stat: () => FILE, run: async () => ({ exitCode: 2, stdout: '', stderr: 'recall: bad scope' }) });
   const outBad: any = await handleRecallCall(bad.$, { sessionFile: '/t/other.jsonl', query: 'x' });
-  expect(outBad.result).toContain('UltraCompress recall failed: uc: bad scope');
+  expect(outBad.result).toContain('UltraCompress recall failed: recall: bad scope');
 
   // Missing transcript: readable failure naming the path, no run.
   const gone = mock$({

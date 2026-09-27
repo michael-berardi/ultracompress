@@ -1,10 +1,10 @@
 #!/bin/bash
-# usage: AB_DIR=/private/dir arm.sh <transcript-id-prefix> <uc|stock>
+# usage: AB_DIR=/private/dir arm.sh <transcript-id-prefix> <ultracompress|stock>
 # Resumes a COPY of one Claude Code transcript (fresh session id), runs /compact,
 # records Claude's own compactMetadata, then asks one question and scores the
 # answer against the transcript's Edit/Write file paths (counts only).
 # stock = --settings disableAllHooks (Claude's built-in compaction);
-# uc = the UltraCompress plugin's session.compact hook. Delete the copies after.
+# ultracompress = the UltraCompress plugin's session.compact hook. Delete the copies after.
 set -u
 SRC=$1; ARM=$2; AB=${AB_DIR:?set AB_DIR to a private results directory}; T=${TMUX_BIN:-tmux}; HERE=$(cd "$(dirname "$0")" && pwd); MODEL=${AB_MODEL:-claude-opus-5-5}
 ID=$(python3 $HERE/prep.py "$SRC" "${ARM_LABEL:-$ARM}"); SOCK=ut235ab

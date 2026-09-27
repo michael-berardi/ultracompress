@@ -14,7 +14,7 @@ const MAX_STDERR_BYTES = 1024 * 1024;
 /** Thrown when the writer stops because the child settled or exited; callers treat it as a no-op race loss. */
 class WriterCancelled extends Error {}
 
-const NO_VALUE = Symbol("uc-no-value");
+const NO_VALUE = Symbol("no-value");
 
 type Write = (chunk: string) => Promise<void>;
 
@@ -228,7 +228,7 @@ function waitDrain(stdin: NodeJS.WritableStream, isCancelled: () => boolean): Pr
  * Write a JSON value to the child stdin incrementally, awaiting drain when
  * the pipe backs up. A single JSON.stringify of the whole payload breaks
  * once it crosses V8's max string length (~512 MiB chars); per-leaf strings
- * stay far below that for UC payloads (one escaped string beyond the limit
+ * stay far below that for tool payloads (one escaped string beyond the limit
  * fails exactly as the old whole-payload stringify did). Resolves after
  * `end()`; rejects on serialization or write failure. Cancels via
  * `isCancelled` once the caller has settled by timeout or child exit.
@@ -249,17 +249,7 @@ export function runUltraCompress<T>(bin: string, args: string[], stdinJson: unkn
   return new Promise((resolve) => {
     let child;
     try {
-      // Opt into the shared UC telemetry sink so agent-side savings are
-      // counted in `uc telemetry` / `utp savings` (default state path).
-      child = spawn(bin, args, {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          UC_TEXT_ENVELOPES: "1", // this extension can safely retrieve by reference
-          ...(process.env.UC_TELEMETRY === undefined && process.env.UC_TELEMETRY_PATH === undefined
-            ? { UC_TELEMETRY: "1" } : {}),
-        },
-      });
+      child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
     } catch (err) {
       resolve({ ok: false, error: `spawn failed: ${String(err)}` });
       return;
