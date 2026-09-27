@@ -115,48 +115,45 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                 input.image_tokens_per_frame,
                 cpt,
             );
-            match engine {
-                crate::classify::Engine::Snap => {
-                    let plan = plan_snap(text, &snap_cfg, input.image_tokens_per_frame, cpt);
-                    if !plan.worthwhile {
-                        no_gain.push(BlockPosition {
-                            message_index: mi,
-                            block_index: bi,
-                        });
-                        continue;
-                    }
-                    let SnapResult {
-                        frames, head, tail, ..
-                    } = render_frames(text, "tool output", &snap_cfg);
-                    let per_frame = crate::estimate::frame_tokens(
-                        (plan.cols as u32) * 8 + 8,
-                        (plan.rows as u32) * 8 + 8,
-                        input.image_tokens_per_frame,
-                    );
-                    let before = crate::estimate::tokens_from_chars(text.len(), cpt);
-                    let after = (frames.len() as u64) * per_frame
-                        + crate::estimate::tokens_from_chars(head.len() + tail.len(), cpt);
-                    tokens_before += before;
-                    tokens_after += after;
-                    ops.push(TransformOp::Snap {
+            if engine == crate::classify::Engine::Snap {
+                let plan = plan_snap(text, &snap_cfg, input.image_tokens_per_frame, cpt);
+                if !plan.worthwhile {
+                    no_gain.push(BlockPosition {
                         message_index: mi,
                         block_index: bi,
-                        head,
-                        tail,
-                        frames: frames
-                            .into_iter()
-                            .map(|f| FrameOut {
-                                id: f.id,
-                                width: f.width,
-                                height: f.height,
-                                png_base64: f.png_base64,
-                            })
-                            .collect(),
-                        tokens_before: before,
-                        tokens_after: after,
                     });
+                    continue;
                 }
-                _ => {}
+                let SnapResult {
+                    frames, head, tail, ..
+                } = render_frames(text, "tool output", &snap_cfg);
+                let per_frame = crate::estimate::frame_tokens(
+                    (plan.cols as u32) * 8 + 8,
+                    (plan.rows as u32) * 8 + 8,
+                    input.image_tokens_per_frame,
+                );
+                let before = crate::estimate::tokens_from_chars(text.len(), cpt);
+                let after = (frames.len() as u64) * per_frame
+                    + crate::estimate::tokens_from_chars(head.len() + tail.len(), cpt);
+                tokens_before += before;
+                tokens_after += after;
+                ops.push(TransformOp::Snap {
+                    message_index: mi,
+                    block_index: bi,
+                    head,
+                    tail,
+                    frames: frames
+                        .into_iter()
+                        .map(|f| FrameOut {
+                            id: f.id,
+                            width: f.width,
+                            height: f.height,
+                            png_base64: f.png_base64,
+                        })
+                        .collect(),
+                    tokens_before: before,
+                    tokens_after: after,
+                });
             }
         }
     }

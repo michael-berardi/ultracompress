@@ -1,7 +1,7 @@
 {
   "name": "ultracompress",
   "displayName": "UltraCompress",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Deterministic local compaction for Claude Code: replaces the stock compaction summarizer with the local UltraCompress binary (no model call, no API cost per compaction) and serves a recall tool over the raw session transcript.",
   "author": { "name": "Michael Berardi" },
   "homepage": "https://github.com/michael-berardi/ultracompress#readme",

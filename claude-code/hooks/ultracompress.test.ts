@@ -381,7 +381,7 @@ test('recall tool.call runs the binary directly on the resolved transcript', asy
     '/home/x/.local/bin/ultracompress', 'recall', '--session', '/cfg/claude/projects/-tmp-My-Dir/s-1.jsonl',
     '--format', 'claude', '--query', 'plan', '--scope', 'lineage',
   ]);
-  expect(runCalls[1].init.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+  expect(runCalls[1].init.env?.CLAUDE_CONFIG_DIR).toBeUndefined();
   expect(runCalls[1].init.timeoutMs).toBe(30_000);
 
   // A failed binary run degrades to a readable failure, never a throw.

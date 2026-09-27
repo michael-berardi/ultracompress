@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.4.0 (candidate)
+## 0.4.0 (2026-09-27) — UltraCompact removed
+
+CLI/core 0.4.0, Claude Code plugin 0.4.0, Pi adapter 0.3.0.
 
 - Removed the optional UltraCompact integration.
 
