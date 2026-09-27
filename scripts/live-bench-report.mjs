@@ -10,7 +10,7 @@ const TRUTH = { functions: "96", fatal: "E-8341-DEPLOY" }; // warn is intentiona
 
 function parseSessionStream(file) {
   let input = 0, cacheRead = 0, cacheWrite = 0, output = 0, cost = 0, compactions = 0, calls = 0, lastText = "";
-  let ultracompressOwned = 0, frames = 0, ucPackets = 0;
+  let ultracompressOwned = 0, frames = 0;
   for (const line of fs.readFileSync(file, "utf8").split("\n")) {
     if (!line.trim()) continue;
     let v; try { v = JSON.parse(line); } catch { continue; }
@@ -20,7 +20,6 @@ function parseSessionStream(file) {
     }
     const blob = line;
     if (blob.includes("[ultracompress:")) frames++;
-    if (blob.includes("[UC packet")) ucPackets++;
     const msg = v.type === "message" ? v.message : v.type === "message_end" ? v.message : null;
     if (msg?.role === "assistant") {
       const u = v.message.usage;
@@ -38,7 +37,7 @@ function parseSessionStream(file) {
       }
     }
   }
-  return { input, cacheRead, cacheWrite, output, cost, compactions, calls, lastText, ultracompressOwned, frames, ucPackets };
+  return { input, cacheRead, cacheWrite, output, cost, compactions, calls, lastText, ultracompressOwned, frames };
 }
 
 function answerOf(dir) {
@@ -111,7 +110,7 @@ for (const r of runs) {
       `${r.correct ? "✓" : "✗"} ${r.note}${rel}`,
     ].join(" "),
   );
-  if (r.frames || r.ucPackets) console.log(`   └ ${r.name}: ${r.frames} frame markers · ${r.ucPackets} UC packet markers in context`);
+  if (r.frames) console.log(`   └ ${r.name}: ${r.frames} frame markers in context`);
 }
 console.log(
   "\nNote: billed-in includes cache reads (providers bill cached tokens at ~1/5 price). " +

@@ -6,11 +6,9 @@ import {
   nextUserIndex,
   snapFrameBlocks,
   snapTextReplacement,
-  ucReplacement,
   capCache,
   type AgentLikeMessage,
   type SnapOp,
-  type UcOp,
 } from "../src/transforms.ts";
 
 const bigText = (n: number) =>
@@ -26,16 +24,6 @@ function sessionWithToolResult(text: string): AgentLikeMessage[] {
     { role: "assistant", content: "consumed" },
   ];
 }
-
-const ucOp: UcOp = {
-  op: "uc",
-  message_index: 0,
-  block_index: 0,
-  stub: "[UC packet: JSON payload, 2000 → 900 tokens, -55%]",
-  packet: "@UC1 c=j\n…",
-  tokens_before: 526,
-  tokens_after: 237,
-};
 
 const snapOp: SnapOp = {
   op: "snap",
@@ -72,20 +60,6 @@ describe("collectCandidates", () => {
 });
 
 describe("applyTransforms", () => {
-  it("replaces UC blocks inline", () => {
-    const msgs = sessionWithToolResult("x".repeat(7000));
-    const key = "k1";
-    const result = applyTransforms(
-      msgs,
-      new Map([[key, { op: ucOp, blocks: ucReplacement(ucOp) }]]),
-      (_m, _bi) => key,
-      "nextUser",
-    );
-    expect(result.ucApplied).toBe(1);
-    const content = msgs[1].content as Array<Record<string, unknown>>;
-    expect(String(content[0].text)).toContain("@UC1");
-  });
-
   it("routes snap frames to the next user message", () => {
     const msgs = [
       { role: "user", content: "run it" },

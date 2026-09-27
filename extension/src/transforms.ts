@@ -1,22 +1,11 @@
 import { createHash } from "node:crypto";
 
 /**
- * Live-context transforms: oversized tool results become UC packets (JSON)
- * or snap frames (bulky text) before the LLM sees them. The raw session
+ * Live-context transforms: oversized tool results become snap frames
+ * before the LLM sees them. The raw session
  * stays untouched — transforms are a per-request lens, recomputed from the
  * deep-copied context each call, memoized by content hash.
  */
-
-export interface UcOp {
-  op: "uc";
-  message_index: number;
-  block_index: number;
-  stub: string;
-  packet: string;
-  reference?: string;
-  tokens_before: number;
-  tokens_after: number;
-}
 
 export interface FrameOut {
   id: string;
@@ -36,21 +25,18 @@ export interface SnapOp {
   tokens_after: number;
 }
 
-export type UltraCompressOp = UcOp | SnapOp;
+export type UltraCompressOp = SnapOp;
 
 export interface TransformResponse {
   ops: UltraCompressOp[];
   stats: {
     blocks_scanned: number;
-    uc_ops: number;
     snap_ops: number;
     tokens_before: number;
     tokens_after: number;
     savings_pct: number;
-    uc_available: boolean;
   };
-  ucStatus?: { available: boolean; version?: string };
-  /** Explicit successful no-gain decisions, never unavailable/failed encodes. */
+  /** Explicit successful no-gain decisions, never unavailable/failed transforms. */
   no_gain?: Array<{ message_index: number; block_index: number }>;
 }
 
@@ -89,7 +75,7 @@ export interface Candidate {
 /** Retrieval must stay readable, including failures; never archive it again. */
 export function isRetrievalResult(m: AgentLikeMessage): boolean {
   return m.role === "toolResult" &&
-    (m.toolName === "ultracompress_uc" || m.toolName === "ultracompress_recall");
+    m.toolName === "ultracompress_recall";
 }
 
 function lastAssistantIndex(messages: AgentLikeMessage[]): number {
@@ -112,18 +98,6 @@ export function collectCandidates(messages: AgentLikeMessage[], minChars: number
     }
   });
   return out;
-}
-
-/** Blocks that replace a tool-result text block for a UC op. */
-export function ucReplacement(op: UcOp): Array<Record<string, unknown>> {
-  return [
-    {
-      type: "text",
-      text: op.reference
-        ? `[UC archived output: call ultracompress_uc with packet="${op.reference}" for the exact original text. This is deferred retrieval, not a summary.]`
-        : `${op.stub}\n\n${op.packet}`,
-    },
-  ];
 }
 
 /** Text edge blocks kept in the tool result for a snap op (frames travel separately). */
@@ -158,7 +132,6 @@ export function snapFrameBlocks(op: SnapOp): Array<Record<string, unknown>> {
 
 export interface ApplyResult {
   messages: AgentLikeMessage[];
-  ucApplied: number;
   snapApplied: number;
 }
 
@@ -173,7 +146,6 @@ export function applyTransforms(
   keys: (m: AgentLikeMessage, bi: number) => string | undefined,
   placement: "nextUser" | "inline",
 ): ApplyResult {
-  let ucApplied = 0;
   let snapApplied = 0;
   const pendingFrames: Array<{ userIndex: number; blocks: Array<Record<string, unknown>> }> = [];
 
@@ -186,26 +158,19 @@ export function applyTransforms(
       if (!key) continue;
       const entry = replacements.get(key);
       if (!entry) continue;
-      if (entry.op.op === "uc") {
-        const replacement = ucReplacement(entry.op as UcOp);
+      const op = entry.op;
+      if (placement === "inline") {
+        const replacement = [...snapTextReplacement(op), ...snapFrameBlocks(op)];
         content.splice(bi, 1, ...replacement);
         bi += replacement.length - 1; // don't rescan inserted blocks
-        ucApplied++;
       } else {
-        const op = entry.op as SnapOp;
-        if (placement === "inline") {
-          const replacement = [...snapTextReplacement(op), ...snapFrameBlocks(op)];
-          content.splice(bi, 1, ...replacement);
-          bi += replacement.length - 1; // don't rescan inserted blocks
-        } else {
-          const replacement = snapTextReplacement(op);
-          content.splice(bi, 1, ...replacement);
-          bi += replacement.length - 1;
-          const userIndex = nextUserIndex(messages, mi);
-          pendingFrames.push({ userIndex, blocks: snapFrameBlocks(op) });
-        }
-        snapApplied++;
+        const replacement = snapTextReplacement(op);
+        content.splice(bi, 1, ...replacement);
+        bi += replacement.length - 1;
+        const userIndex = nextUserIndex(messages, mi);
+        pendingFrames.push({ userIndex, blocks: snapFrameBlocks(op) });
       }
+      snapApplied++;
     }
   });
 
@@ -228,7 +193,7 @@ export function applyTransforms(
     }
   }
 
-  return { messages, ucApplied, snapApplied };
+  return { messages, snapApplied };
 }
 
 export function nextUserIndex(messages: AgentLikeMessage[], from: number): number {

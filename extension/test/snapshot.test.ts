@@ -29,7 +29,7 @@ describe("ultracompress snapshots (instant-snap compatible)", () => {
 });
 
 describe("writeSnapEntries (streamed snapshots)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "uc-snap-"));
+  const dir = mkdtempSync(join(tmpdir(), "ultracompress-snap-"));
 
   afterAll(() => {
     try {

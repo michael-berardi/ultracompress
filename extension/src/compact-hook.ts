@@ -32,9 +32,6 @@ export interface CompactStdin {
   smartKeepTail: boolean;
   vision: string;
   modelVision: boolean | null;
-  ucBin: string;
-  ucEnabled: boolean;
-  ucMinChars: number;
   snapMinChars: number;
 }
 
@@ -46,7 +43,6 @@ export interface UltraCompressCompactStats {
   kept_messages: number;
   keep_user_turns_resolved: number;
   smart_keep_adjusted: boolean;
-  uc_blocks: number;
   snap_blocks: number;
   chars_per_token: number;
   calibrated: boolean;
@@ -57,16 +53,15 @@ export interface UltraCompressCompactResult {
   first_kept_entry_id: string;
   details: Record<string, unknown>;
   stats: UltraCompressCompactStats;
-  uc_status: { available: boolean; version?: string; reason?: string };
 }
 
 /** /ultracompress args: `keep:N [prompt…]`, `policy:<p>`, bare prompt text. */
 export function parseUltraCompressArgs(raw: string | undefined): { keep: number | null; policy: string | null; prompt: string } {
   const keepMatch = /(?:^|\s)keep:(\d+)(?=\s|$)/.exec(raw ?? "");
-  const policyMatch = /(?:^|\s)policy:(auto|vcc|snap|uc)(?=\s|$)/.exec(raw ?? "");
+  const policyMatch = /(?:^|\s)policy:(auto|vcc|snap)(?=\s|$)/.exec(raw ?? "");
   let prompt = (raw ?? "")
     .replace(/(?:^|\s)keep:\d+(?=\s|$)/, "")
-    .replace(/(?:^|\s)policy:(auto|vcc|snap|uc)(?=\s|$)/, "")
+    .replace(/(?:^|\s)policy:(auto|vcc|snap)(?=\s|$)/, "")
     .trim();
   if ((prompt.startsWith('"') && prompt.endsWith('"')) || (prompt.startsWith("'") && prompt.endsWith("'"))) {
     prompt = prompt.slice(1, -1);
@@ -84,9 +79,6 @@ export function buildCompactStdin(event: CompactEventLike, opts: {
   keepUserTurns: number | null;
   smartKeepTail: boolean;
   modelVision: boolean | null;
-  ucBin: string;
-  ucEnabled: boolean;
-  ucMinChars: number;
   snapMinChars: number;
 }): CompactStdin {
   const entries = (event.branchEntries ?? []).filter(
@@ -99,9 +91,6 @@ export function buildCompactStdin(event: CompactEventLike, opts: {
     smartKeepTail: opts.smartKeepTail,
     vision: opts.modelVision ? "on" : "auto",
     modelVision: opts.modelVision,
-    ucBin: opts.ucBin,
-    ucEnabled: opts.ucEnabled,
-    ucMinChars: opts.ucMinChars,
     snapMinChars: opts.snapMinChars,
   };
   if (typeof event.preparation?.tokensBefore === "number") stdin.tokensBefore = event.preparation.tokensBefore;
@@ -137,6 +126,5 @@ export function formatStatsLine(rc: UltraCompressCompactResult): string {
     `summarized ${s.summarized_messages}, kept ${s.kept_messages}`,
   ];
   if (s.smart_keep_adjusted) parts.push(`smart-keep → ${s.keep_user_turns_resolved}`);
-  if (s.uc_blocks > 0) parts.push(`uc ×${s.uc_blocks}`);
   return parts.join(" · ");
 }

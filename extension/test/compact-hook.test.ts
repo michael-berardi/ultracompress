@@ -46,8 +46,7 @@ describe("buildCompactStdin", () => {
 
   it("keeps only message and compaction entries", () => {
     const stdin = buildCompactStdin(event, {
-      policy: "auto", keepUserTurns: null, smartKeepTail: true, modelVision: true,
-      ucBin: "uc", ucEnabled: true, ucMinChars: 1200, snapMinChars: 6000,
+      policy: "auto", keepUserTurns: null, smartKeepTail: true, modelVision: true, snapMinChars: 6000,
     });
     expect(stdin.entries.map((e) => e.type)).toEqual(["message", "message"]);
     expect(stdin.tokensBefore).toBe(42_000);
@@ -57,8 +56,7 @@ describe("buildCompactStdin", () => {
 
   it("vision auto when model unknown", () => {
     const stdin = buildCompactStdin(event, {
-      policy: "auto", keepUserTurns: null, smartKeepTail: true, modelVision: null,
-      ucBin: "uc", ucEnabled: true, ucMinChars: 1200, snapMinChars: 6000,
+      policy: "auto", keepUserTurns: null, smartKeepTail: true, modelVision: null, snapMinChars: 6000,
     });
     expect(stdin.vision).toBe("auto");
     expect(stdin.modelVision).toBeNull();
@@ -77,12 +75,10 @@ const rcResult: UltraCompressCompactResult = {
     kept_messages: 6,
     keep_user_turns_resolved: 3,
     smart_keep_adjusted: true,
-    uc_blocks: 2,
     snap_blocks: 0,
     chars_per_token: 3.8,
     calibrated: true,
   },
-  uc_status: { available: true, version: "uc 0.1.2" },
 };
 
 describe("toCompactionResult", () => {
@@ -106,6 +102,5 @@ describe("formatStatsLine", () => {
     const line = formatStatsLine(rcResult);
     expect(line).toContain("50.0k → 12.3k tok (-75%)");
     expect(line).toContain("smart-keep → 3");
-    expect(line).toContain("uc ×2");
   });
 });

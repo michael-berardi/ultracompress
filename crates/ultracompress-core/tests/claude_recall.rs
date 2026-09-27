@@ -27,8 +27,11 @@ fn ids(r: &ultracompress_core::recall::RecallResult) -> Vec<String> {
 
 /// Build a classic Pi session file (session header + id/parentId entries).
 fn pi_fixture(id: &str, records: Vec<serde_json::Value>) -> PathBuf {
-    let path =
-        std::env::temp_dir().join(format!("uc-claude-pi-{}-{}.jsonl", std::process::id(), id));
+    let path = std::env::temp_dir().join(format!(
+        "ultracompress-claude-pi-{}-{}.jsonl",
+        std::process::id(),
+        id
+    ));
     let mut lines =
         vec![json!({"type":"session","version":3,"id":id,"cwd":"/synthetic"}).to_string()];
     lines.extend(records.into_iter().map(|r| r.to_string()));

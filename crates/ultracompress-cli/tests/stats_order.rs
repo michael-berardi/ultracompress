@@ -5,7 +5,8 @@ use std::process::Command;
 
 #[test]
 fn stats_by_role_is_sorted_and_stable() {
-    let dir = std::env::temp_dir().join(format!("uc-stats-order-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("ultracompress-stats-order-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let session = dir.join("session.jsonl");
     let lines = [

@@ -259,7 +259,7 @@ describe("streamJsonTo", () => {
 });
 
 describe("runUltraCompress stdin streaming", () => {
-  const dir = mkdtempSync(join(tmpdir(), "uc-bridge-"));
+  const dir = mkdtempSync(join(tmpdir(), "ultracompress-bridge-"));
   const consumerScript = join(dir, "consumer.cjs");
 
   afterAll(() => {

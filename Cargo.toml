@@ -12,7 +12,7 @@ homepage = "https://github.com/michael-berardi/ultracompress"
 keywords = ["llm", "compaction", "context-window", "ai-agents", "claude-code"]
 categories = ["command-line-utilities", "compression", "development-tools"]
 repository = "https://github.com/michael-berardi/ultracompress"
-description = "UltraCompress — content-aware conversation compaction: VCC briefs, snap frames, UC packets, one policy engine."
+description = "UltraCompress — content-aware conversation compaction: VCC briefs, snap frames, lossless raw-history recall."
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

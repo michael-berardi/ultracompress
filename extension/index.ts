@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runUltraCompress } from "./src/bridge";
-import { UcReferences } from "./src/references";
 import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
 import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
 import { listSnaps, writeSnapEntries } from "./src/snapshot";
@@ -27,9 +26,9 @@ import {
  * UltraCompress — content-aware compaction for Pi.
  *
  * Compaction:  deterministic VCC brief via the UltraCompress binary (no LLM call),
- *              UC packets inline for JSON payloads, smart keep-tail,
+ *              smart keep-tail,
  *              token-budget tail rescue, pre-compaction snapshots.
- * Live path:   oversized tool results become UC packets or snap PNG frames
+ * Live path:   oversized tool results become snap PNG frames
  *              (fixed vision cost) before each LLM call — memoized by hash.
  * Recall:      ultracompress_recall searches the raw session JSONL, so compacted-away
  *              history stays reachable. Lossless.
@@ -45,10 +44,8 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();
   const ultracompressBin = resolveUltraCompressBin(settings);
   const transformCache = new Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>();
-  const references = new UcReferences();
   const noGainCache = new Map<string, true>();
   pi.on("session_start", () => {
-    references.clear();
     transformCache.clear();
     noGainCache.clear();
   });
@@ -66,8 +63,8 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
   const keyFor = (text: string) =>
     cacheKey(
-      { p: settings.policy, v: visionKnown, s: settings.snap.minChars, u: settings.uc.minChars,
-        snap: settings.snap.enabled, uc: settings.uc.enabled, bin: settings.uc.bin,
+      { p: settings.policy, v: visionKnown, s: settings.snap.minChars,
+        snap: settings.snap.enabled,
         imageTokens: settings.snap.imageTokensPerFrame, cpt: lastCalibratedCpt },
       text,
     );
@@ -84,7 +81,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
   // ── Live transforms ────────────────────────────────────────────────────
   pi.on("context", async (event, ctx) => {
-    if (!settings.snap.enabled && !settings.uc.enabled) return undefined;
+    if (!settings.snap.enabled) return undefined;
     // Re-evaluate on model switches; a session-start vision latch can send
     // cached image transforms to a later text-only model.
     {
@@ -97,7 +94,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         visionKnown = null;
       }
     }
-    const minChars = Math.min(settings.uc.minChars, settings.snap.minChars);
+    const minChars = settings.snap.minChars;
     const messages = event.messages as unknown as AgentLikeMessage[];
     // Reuse keys only within this request: repeated text and the apply pass need
     // no second serialization/hash. Keep candidate occurrences (and their order)
@@ -130,10 +127,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         policy: settings.policy,
         vision: visionKnown ? "on" : "auto",
         modelVision: visionKnown,
-        ucBin: settings.uc.bin,
-        ucEnabled: settings.uc.enabled,
         snapMinChars: settings.snap.minChars,
-        ucMinChars: settings.uc.minChars,
         imageTokensPerFrame: settings.snap.imageTokensPerFrame,
         ...(lastCalibratedCpt ? { charsPerToken: lastCalibratedCpt } : {}),
       };
@@ -152,12 +146,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         for (const op of res.data.ops) {
           const c = fresh[op.message_index];
           if (!c) continue;
-          const blocks =
-            op.op === "uc"
-              ? [{ type: "text", text: `${op.stub}\n\n${op.packet}` }]
-              : null;
-          if (blocks) transformCache.set(c.key, { op, blocks });
-          else if (op.op === "snap") {
+          if (op.op === "snap") {
             // Snap replacement is assembled at apply time (frames may travel
             // to the next user message); store the op with edge text blocks.
             transformCache.set(c.key, {
@@ -174,7 +163,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
           }
         }
         // Only the newer core's explicit successful decisions are memoized.
-        // Legacy responses and codec/process failures remain retryable.
+        // Legacy responses and process failures remain retryable.
         for (const position of res.data.no_gain ?? []) {
           const c = fresh[position.message_index];
           if (c && position.block_index === 0 && !transformCache.has(c.key)) noGainCache.set(c.key, true);
@@ -188,24 +177,6 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
     if (transformCache.size === 0) return undefined;
 
-    // Rehydrate references from original context even after bounded-cache eviction.
-    for (const candidate of candidates) {
-      const entry = transformCache.get(candidate.key);
-      if (entry?.op.op === "uc") {
-        const reference = references.put(candidate.text);
-        if (reference) entry.op.reference = reference;
-        else transformCache.delete(candidate.key); // too large: preserve stock text
-      }
-    }
-
-    // A single request may exceed the reference budget. Never emit an evicted handle.
-    for (const candidate of candidates) {
-      const entry = transformCache.get(candidate.key);
-      if (entry?.op.op === "uc" && entry.op.reference && references.get(entry.op.reference) === undefined) {
-        transformCache.delete(candidate.key);
-      }
-    }
-
     const keyFn = (m: AgentLikeMessage, bi: number): string | undefined => {
       if (m.role !== "toolResult") return undefined;
       const content = m.content;
@@ -216,7 +187,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     };
 
     const result = applyTransforms(messages, transformCache, keyFn, settings.snap.placement);
-    if (result.ucApplied + result.snapApplied === 0) return undefined;
+    if (result.snapApplied === 0) return undefined;
     return { messages: result.messages as unknown as typeof event.messages };
   });
 
@@ -260,9 +231,6 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
       keepUserTurns: args.keep ?? settings.keepUserTurns,
       smartKeepTail: settings.smartKeepTail,
       modelVision,
-      ucBin: settings.uc.bin,
-      ucEnabled: settings.uc.enabled,
-      ucMinChars: settings.uc.minChars,
       snapMinChars: settings.snap.minChars,
     });
 
@@ -303,7 +271,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
   // ── Commands ───────────────────────────────────────────────────────────
   pi.registerCommand("ultracompress", {
-    description: "Compact now with UltraCompress (keep:N policy:auto|vcc|snap|uc, optional follow-up prompt)",
+    description: "Compact now with UltraCompress (keep:N policy:auto|vcc|snap, optional follow-up prompt)",
     handler: async (args, ctx) => {
       const custom = args?.trim() ? `/ultracompress ${args.trim()}` : "/ultracompress";
       try {
@@ -340,7 +308,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         `ultracompress ${"0.2.1"}`,
         `UltraCompress binary: ${ultracompressBin}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
-        `uc: ${settings.uc.enabled ? "on" : "off"} (${settings.uc.bin}) · snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
+        `snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
         `transforms cached: ${transformCache.size}`,
         `snapshots: ${listSnaps(process.cwd()).length} in .steak-pi/snaps`,
       ];
@@ -388,40 +356,5 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerTool({
-    name: "ultracompress_uc",
-    label: "UC Decode",
-    description:
-      "Retrieve exact original tool output using the uc:<hash> reference printed in its archive marker. " +
-      "Pass that reference as packet; never reconstruct or abbreviate an encoded payload. " +
-      "Legacy complete @UC1 packets are also accepted and decode to JSON. " +
-      "Only legacy packets explicitly marked as envelopes wrap original text in the JSON key t.",
-    promptSnippet: "ultracompress_uc: retrieve original tool output by its uc:<hash> reference; legacy complete @UC1 packets also supported.",
-    parameters: {
-      type: "object",
-      properties: {
-        packet: { type: "string", description: "The uc:<hash> reference from the archive marker (preferred), or a complete legacy @UC1 packet." },
-      },
-      required: ["packet"],
-    },
-    async execute(_id, params) {
-      const packet = String(params.packet ?? "");
-      if (!packet) return { content: [{ type: "text", text: "No packet provided." }], details: {} };
-      if (packet.startsWith("uc:")) {
-        const text = references.get(packet.trim());
-        return { content: [{ type: "text", text: text ??
-          "UC reference is unavailable in this session. Use ultracompress_recall or re-read the original source; do not invent a packet or retry this missing reference." }], details: {} };
-      }
-      const res = await runUltraCompress<{ decoded?: string; error?: string }>(
-        ultracompressBin, ["uc", "decode"], { packet, ucBin: settings.uc.bin },
-      );
-      if (!res.ok || !res.data) {
-        return { content: [{ type: "text", text: `UltraCompress UC decode failed: ${res.error}. Use the uc:<hash> reference when available, or retrieve the original with ultracompress_recall. Do not retry an unchanged incomplete packet.` }], details: {} };
-      }
-      if (res.data.error) {
-        return { content: [{ type: "text", text: `decode error: ${res.data.error}. Use the uc:<hash> reference when available, or retrieve the original with ultracompress_recall. This error alone does not identify the cause; do not retry an unchanged incomplete packet.` }], details: {} };
-      }
-      return { content: [{ type: "text", text: res.data.decoded ?? "(empty)" }], details: {} };
-    },
-  });
+
 }
