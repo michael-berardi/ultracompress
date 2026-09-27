@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (candidate)
 
 - Removed the optional UltraCompact integration.
 
