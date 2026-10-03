@@ -33,7 +33,7 @@ know who summarized what.
 You need the `ultracompress` binary (Rust 1.85+ to build):
 
 ```sh
-git clone --branch v0.3.0 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.4.0 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin && cp target/release/ultracompress ~/.local/bin/

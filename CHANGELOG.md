@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- New Hermes Agent context engine under `hermes/` (adapter 0.1.0, tested with
+  Hermes Agent 0.21.5). It subclasses Hermes' `ContextCompressor` and replaces
+  only the summary step with `ultracompress compact`: a deterministic brief of
+  the conversation, verbatim excerpts of the agent's replies and Hermes' own
+  deterministic sections, carried forward across compactions. Compaction fires
+  at the configured threshold (30% by default) instead of Hermes' 75% floor for
+  windows under 512k. Condensed turns go to a private Pi-format archive per
+  session, searched by the `ultracompress_recall` tool. A missing or failing
+  binary falls back to Hermes' built-in summary with one log line; `mode:
+  builtin` restores stock behaviour. On one real 190k-token session: 0.05 s
+  instead of 46.8 s, 4 of 5 facts from the summary versus 3.5, 5 of 5 with
+  recall.
+
 ## 0.4.0 (2026-09-27) — UltraCompact removed
 
 CLI/core 0.4.0, Claude Code plugin 0.4.0, Pi adapter 0.3.0.
