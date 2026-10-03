@@ -1,0 +1,3 @@
+name: ultracompress
+version: 0.1.0
+description: "UltraCompress compaction for Hermes Agent: a deterministic local brief instead of a model-written summary, plus raw-history recall."

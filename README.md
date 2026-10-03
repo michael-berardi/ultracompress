@@ -11,7 +11,7 @@ still searchable. $0 per compaction.**
 
 [![Latest release](https://img.shields.io/github/v/release/michael-berardi/ultracompress?label=release)](https://github.com/michael-berardi/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/michael-berardi/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
 
-[Install](#install) · [Claude Code](#claude-code) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
+[Install](#install) · [Claude Code](#claude-code) · [Hermes Agent](#hermes-agent) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
 
 </div>
 
@@ -22,8 +22,8 @@ builds a structured conversation brief without an LLM request, replaces bulky
 tool output with image frames when supported, and keeps the
 raw session on disk so a recall tool can still find anything that was
 condensed. It ships as a Rust CLI plus a [Pi coding agent](https://pi.dev)
-adapter and a standalone [Claude Code](#claude-code) plugin — the two places
-coding agents currently compact, both served by the same engine.
+adapter, a standalone [Claude Code](#claude-code) plugin and a
+[Hermes Agent](#hermes-agent) context engine, all served by the same engine.
 
 Summary generation by another model call is a strange way to save model calls.
 UltraCompress skips the middleman: compaction runs locally in roughly 10–300
@@ -34,23 +34,23 @@ ranked recall measured at **94.4% hit@5** on its published fixture
 ([docs/BENCHMARKS.md](docs/BENCHMARKS.md)). Context management should not
 require another context-management agent.
 
-## New in 0.3.0
+## What's new
 
-- **A standalone Claude Code plugin** (`claude-code/`): compaction and recall
-  for Claude Code without UltraTerm — see [Claude Code](#claude-code) and the
-  [measured comparison](#against-claude-codes-own-compaction).
-- **Native Claude Code transcript recall**: `ultracompress recall` reads
-  `~/.claude/projects/**/*.jsonl` directly (`--format auto|pi|claude`), keyed
-  by `uuid`/`parentUuid`, crossing compaction boundaries through
-  `logicalParentUuid`. No converters. Pi sessions behave exactly as before.
+- **Hermes Agent context engine** (`hermes/`, on `main`, not yet in a tagged
+  release): replaces Hermes' model-written compaction summary with the local
+  brief and adds raw-history recall — see [Hermes Agent](#hermes-agent).
+- **0.4.0**: the optional UltraCompact encoder is removed. VCC briefs, snap
+  frames and recall are unchanged.
+- **0.3.0**: a standalone Claude Code plugin (`claude-code/`) and native
+  Claude Code transcript recall (`--format auto|pi|claude`).
 
 ## Install
 
-Current release: **0.3.0**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
+Current release: **0.4.0**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.3.0 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.4.0 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -87,6 +87,26 @@ Full install, the binary lookup order, and uninstall:
 [`claude-code/README.md`](claude-code/README.md).
 
 **UltraTerm users already have this built in. Do not load both.**
+
+## Hermes Agent
+
+A Hermes context engine lives in [`hermes/`](hermes/README.md). Link it into
+your profile and select it:
+
+```sh
+ln -s /path/to/ultracompress/hermes/ultracompress ~/.hermes/plugins/ultracompress
+hermes config set context.engine ultracompress
+```
+
+Hermes keeps its own compaction pipeline; the engine replaces only the summary
+step with the local brief, verbatim excerpts of the agent's replies and Hermes'
+deterministic sections, and registers `ultracompress_recall` over a private raw
+archive of everything condensed. It compacts at 30% of the window instead of
+Hermes' 75% floor for models under 512k tokens. On one real 190k-token Hermes
+session the summary took 0.05 s instead of 46.8 s and answered more recall
+questions; missing or failing binaries fall back to Hermes' built-in summary
+with one log line. Settings, measurements and uninstall:
+[`hermes/README.md`](hermes/README.md).
 
 ## Representations and savings
 
@@ -238,6 +258,13 @@ Claude Code plugin checks (function hooks are early access, hence the switch):
 ```sh
 CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate claude-code
 CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test claude-code
+```
+
+Hermes adapter checks (the second needs a Hermes Agent checkout and its interpreter):
+
+```sh
+python3 -m unittest discover -s hermes/tests -v
+HERMES_AGENT_DIR=~/.hermes/hermes-agent <hermes python> -m unittest discover -s hermes/tests -v
 ```
 
 The Rust CLI is independent of Pi. Its JSON-in/JSON-out contract is usable by
