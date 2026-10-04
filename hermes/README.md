@@ -77,6 +77,9 @@ If the binary is missing, fails, times out, or returns nothing, the engine logs 
 the cause and Hermes' built-in summary runs for that compaction. A failure never costs the
 session. Recall failures come back as readable tool results.
 
+A stretch made only of tool calls (nothing said by the user or the agent) is not a failure: the
+engine keeps the previous brief and adds one line naming the tools that ran, with no model call.
+
 ## Measured
 
 One real Hermes Telegram session (GPT-6.1 Sol, 245 messages, about 190k tokens), compacted from
@@ -102,6 +105,12 @@ HERMES_AGENT_DIR=~/.hermes/hermes-agent <hermes python> -m unittest discover -s 
 `<hermes python>` is the interpreter Hermes runs on, so its dependencies import. The
 integration tests load the adapter through Hermes' own plugin loader in a temporary
 `HERMES_HOME` and use a synthetic conversation; never commit real sessions.
+
+Recent Hermes builds treat a fresh `HERMES_HOME` as an unfinished install. On import they
+download their default tools into it (several minutes, over 1 GB) and rewrite the checkout's
+`.hermes/bin` launchers to use that temporary Python. The tests put the launchers back on
+teardown, but a run killed before teardown leaves `hermes` broken. Copy `.hermes/bin` before
+running them, and give the run time to finish.
 
 ## Uninstall
 

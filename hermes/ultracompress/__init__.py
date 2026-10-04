@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional
 from agent.context_compressor import ContextCompressor
 
 from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, compose_brief,
-                      conversation_view, find_binary, section, BRIEF_HEADING, to_pi_entries)
+                      conversation_view, find_binary, section, tool_only_brief, BRIEF_HEADING, to_pi_entries)
 
 __version__ = "0.1.0"
 logger = logging.getLogger("plugins.ultracompress")
@@ -165,12 +165,18 @@ class UltraCompressEngine(ContextCompressor):
     def _ultracompress_brief(self, turns: List[Dict[str, Any]]):
         view = conversation_view(turns, int(self.uc_settings.get("tool_result_chars") or 0), _is_carrier)
         entries = to_pi_entries(view)
-        if not entries:
-            raise RuntimeError("no user or assistant text to condense")
-        payload: Dict[str, Any] = {"entries": entries, "keepUserTurns": 0, "smartKeepTail": False}
+        previous_brief = ""
         if self._previous_summary:
             previous = self._strip_summary_prefix(self._previous_summary)
-            payload["previousSummary"] = section(previous, BRIEF_HEADING) or previous
+            previous_brief = section(previous, BRIEF_HEADING) or previous
+        if not entries:
+            # A stretch of tool calls with nothing said (a long tool loop): there is no text for the
+            # CLI, and a model summary here costs a minute. Keep the previous brief and name the tools;
+            # the raw archive keeps the results for recall.
+            return tool_only_brief(turns, previous_brief), {"toolOnly": True}
+        payload: Dict[str, Any] = {"entries": entries, "keepUserTurns": 0, "smartKeepTail": False}
+        if previous_brief:
+            payload["previousSummary"] = previous_brief
         proc = subprocess.run([self._binary(), "compact", "--policy", "vcc", "--keep", "0"],
                               input=json.dumps(payload), capture_output=True, text=True,
                               timeout=float(self.uc_settings.get("timeout_seconds") or 30))

@@ -34,6 +34,12 @@ def _padded_conversation():
 class EngineIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # A fresh HERMES_HOME has no install state, so Hermes may run its "finish install" tail on
+        # import and rewrite the checkout's launchers to point at this temporary home's Python,
+        # which breaks the real `hermes` command once the folder is deleted. Snapshot the launchers
+        # and put them back afterwards.
+        cls.launchers = {f: f.read_bytes() for f in Path(HERMES_DIR).expanduser().joinpath(".hermes", "bin").glob("*")
+                         if f.is_file()}
         cls.home = tempfile.mkdtemp(prefix="uc-hermes-home-")
         os.environ["HERMES_HOME"] = cls.home
         shutil.copytree(ADAPTER, Path(cls.home, "plugins", "ultracompress"))
@@ -46,6 +52,11 @@ class EngineIntegration(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         shutil.rmtree(cls.home, ignore_errors=True)
+        rewritten = [f for f, data in cls.launchers.items() if f.read_bytes() != data]
+        for f in rewritten:
+            f.write_bytes(cls.launchers[f])
+        if rewritten:
+            print(f"\nrestored Hermes launchers rewritten during the test: {[str(f) for f in rewritten]}", file=sys.stderr)
 
     def engine(self, **settings):
         eng = self.load("ultracompress")
@@ -123,6 +134,23 @@ class EngineIntegration(unittest.TestCase):
         self.assertEqual(result, "BUILTIN-SUMMARY")
         self.assertFalse(eng.last_uc_report["ok"])
         self.assertIn("not found", eng.last_uc_report["error"])
+
+    def test_tool_only_window_stays_local(self):
+        from agent.context_compressor import ContextCompressor
+        eng = self.engine()
+        original = ContextCompressor._generate_summary
+        ContextCompressor._generate_summary = lambda self, *a, **k: "BUILTIN-SUMMARY"
+        turns = [{"role": "assistant", "content": "", "tool_calls": [
+                     {"id": "c1", "type": "function", "function": {"name": "web_search", "arguments": "{}"}}]},
+                 {"role": "tool", "tool_call_id": "c1", "content": "results"}]
+        try:
+            result = eng._generate_summary(turns)
+        finally:
+            ContextCompressor._generate_summary = original
+        self.assertNotEqual(result, "BUILTIN-SUMMARY")
+        self.assertIn("Tool steps condensed", result)
+        self.assertTrue(eng.last_uc_report.get("ok"), eng.last_uc_report)
+        self.assertTrue(eng.last_uc_report.get("toolOnly"))
 
     def test_builtin_mode_is_a_kill_switch(self):
         from agent.context_compressor import ContextCompressor
