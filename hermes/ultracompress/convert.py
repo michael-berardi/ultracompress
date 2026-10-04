@@ -175,9 +175,27 @@ def carry_forward_users(summary: str, previous_summary: str, budget: int = 4000)
     return summary + "\n\n" + USERS_HEADING + "\n" + carried
 
 
+def tool_only_brief(turns: Iterable[Dict[str, Any]], previous_brief: str = "") -> str:
+    """Brief for a window with tool steps only: the previous brief plus which tools ran, by count."""
+    counts: Dict[str, int] = {}
+    for t in turns:
+        for tc in t.get("tool_calls") or []:
+            name = (tc.get("function") or {}).get("name") or tc.get("name") or "tool"
+            counts[name] = counts.get(name, 0) + 1
+    used = ", ".join(f"{n} ×{c}" if c > 1 else n for n, c in sorted(counts.items(), key=lambda kv: -kv[1]))
+    line = f"Tool steps condensed with nothing said: {sum(counts.values())} call(s) ({used or 'none'})."
+    previous = previous_brief.strip()
+    if previous.startswith(BRIEF_INTRO):  # compose_brief adds the intro again
+        previous = previous.split("\n\n", 1)[1].strip() if "\n\n" in previous else ""
+    return f"{previous}\n\n{line}" if previous else line
+
+
+BRIEF_INTRO = "Deterministic brief of the condensed turns"
+
+
 def compose_brief(brief: str) -> str:
     return (
-        BRIEF_HEADING + "\n"
-        "Deterministic brief of the condensed turns (built locally, no model call). Anything not "
+        BRIEF_HEADING + "\n" +
+        BRIEF_INTRO + " (built locally, no model call). Anything not "
         f"shown here is still searchable with the {RECALL_TOOL} tool.\n\n" + brief
     )
