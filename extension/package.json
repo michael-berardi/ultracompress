@@ -1,7 +1,7 @@
 {
   "name": "ultracompress",
   "version": "0.3.0",
-  "description": "UltraCompress \u2014 content-aware compaction for Pi: deterministic VCC briefs, snap frames for bulky tool output, lossless recall. By Implose Cybernetics.",
+  "description": "UltraCompress \u2014 content-aware compaction for Pi: deterministic VCC briefs, snap frames for bulky tool output, lossless recall. By Pareto Cybernetics.",
   "license": "MIT",
   "type": "module",
   "main": "index.ts",
