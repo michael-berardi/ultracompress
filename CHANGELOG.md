@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (2026-10-13) — Bounded diagnostic retention
+
+CLI/core 0.4.1, unchanged Claude Code plugin 0.4.0 and Pi adapter 0.3.0,
+Hermes adapter 0.1.0.
+
+- Diagnostic extraction no longer skips every tool output over 20,000 bytes.
+  A bounded head/tail scan retains literal error codes from long logs, including
+  TypeScript and npm diagnostics. Fact counts and line lengths remain capped;
+  omitted detail remains searchable through raw-history recall.
+- Added matched baseline/candidate diagnostic fixtures and a hash-verified,
+  frozen-input corpus comparison. Benchmarks bound individual subprocesses
+  and report excluded oversized inputs and failed operations.
+- Inspired by context-mode's explicit diagnostic events. No new dependencies,
+  database, proxy, or inference that an earlier error was resolved.
 
 - New Hermes Agent context engine under `hermes/` (adapter 0.1.0, tested with
   Hermes Agent 0.21.5). It subclasses Hermes' `ContextCompressor` and replaces

@@ -36,21 +36,22 @@ require another context-management agent.
 
 ## What's new
 
-- **Hermes Agent context engine** (`hermes/`, on `main`, not yet in a tagged
-  release): replaces Hermes' model-written compaction summary with the local
-  brief and adds raw-history recall — see [Hermes Agent](#hermes-agent).
-- **0.4.0**: the optional UltraCompact encoder is removed. VCC briefs, snap
-  frames and recall are unchanged.
+- **0.4.1**: diagnostic facts from long tool outputs survive in the brief.
+  TypeScript and npm diagnostic codes are recognized. Scanning and fact counts
+  stay bounded; unscanned detail remains available through recall.
+- **Hermes Agent context engine** (`hermes/`): replaces Hermes' model-written
+  compaction summary with the local brief and adds raw-history recall — see
+  [Hermes Agent](#hermes-agent).
 - **0.3.0**: a standalone Claude Code plugin (`claude-code/`) and native
   Claude Code transcript recall (`--format auto|pi|claude`).
 
 ## Install
 
-Current release: **0.4.0**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
+Current release: **0.4.1**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.4.0 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.4.1 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -275,7 +276,10 @@ scripts make provider calls and are not required for ordinary unit testing.
 
 The VCC engine descends from [pi-vcc](https://github.com/sting8k/pi-vcc) and
 [VCC](https://github.com/lllyasviel/VCC). Snap frames adapt the image-frame
-compaction approach.
+compaction approach. Diagnostic retention is informed by
+[context-mode](https://github.com/mksglu/context-mode)'s explicit error events;
+UltraCompress implements its own bounded extraction without adding a database
+or tool proxy.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
 [MIT License](LICENSE). Report security issues privately rather than including
