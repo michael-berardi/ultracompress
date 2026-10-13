@@ -1,12 +1,12 @@
 # UltraCompress — Benchmarks
 
-## 0.4.1 diagnostic-retention gate
+## Diagnostic-retention gate (0.4.1 and 0.4.2)
 
-Matched deterministic fixtures compare the 0.4.0 CLI with 0.4.1 on identical
+Matched deterministic fixtures compare the 0.4.0 CLI with 0.4.2 on identical
 inputs. This is a correctness regression gate, not a production accuracy or
 cost estimate.
 
-| Measure | 0.4.0 | 0.4.1 |
+| Measure | 0.4.0 | 0.4.2 |
 | --- | ---: | ---: |
 | Intended literal codes in Key Facts (16 fixtures) | 8/30 | 30/30 |
 | False facts in the source-read negative fixture | 3 | 0 |

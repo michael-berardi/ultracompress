@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 (2026-10-13) — Development dependency security updates
+
+CLI/core 0.4.2, Pi adapter 0.4.0, unchanged Claude Code plugin 0.4.0 and
+Hermes adapter 0.1.0.
+
+- Updated the Pi adapter development host to Pi 1.0.4, which includes patched
+  `undici` 8.10.2 and `brace-expansion` 5.0.12; also updated `source-map-js`
+  to 1.2.2. The adapter now declares tested Pi 1.0.4+ support while retaining
+  its existing Pi 0.85.x compatibility range.
+- Diagnostic retention, snap frames, recall and adapter behavior are unchanged
+  from 0.4.1. The adapter's root development install passes `npm audit` with
+  zero reported vulnerabilities; this does not update an independently
+  installed Pi host.
+
 ## 0.4.1 (2026-10-13) — Bounded diagnostic retention
 
 CLI/core 0.4.1, unchanged Claude Code plugin 0.4.0 and Pi adapter 0.3.0,

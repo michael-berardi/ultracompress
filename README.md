@@ -36,6 +36,8 @@ require another context-management agent.
 
 ## What's new
 
+- **0.4.2**: patched Pi adapter development dependencies and added Pi 1.0.4+
+  support. Pi 0.85.x compatibility and diagnostic retention are unchanged.
 - **0.4.1**: diagnostic facts from long tool outputs survive in the brief.
   TypeScript and npm diagnostic codes are recognized. Scanning and fact counts
   stay bounded; unscanned detail remains available through recall.
@@ -47,11 +49,11 @@ require another context-management agent.
 
 ## Install
 
-Current release: **0.4.1**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x
+Current release: **0.4.2**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and 1.0.4,
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.4.1 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.4.2 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
