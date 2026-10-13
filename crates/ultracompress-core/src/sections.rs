@@ -394,15 +394,16 @@ fn severity_pos(lower: &str) -> Option<usize> {
 }
 
 fn is_diagnostic_line(lower: &str, strict: bool) -> bool {
-    if lower.starts_with("//") || lower.starts_with("/*") || lower.starts_with('*') {
+    if strict && (lower.starts_with("//") || lower.starts_with("/*") || lower.starts_with('*')) {
         return false;
     }
     let Some(sev_pos) = severity_pos(lower) else {
         return false;
     };
-    // A diagnostic quoted inside a string literal (source, fixture, JSON
-    // example) is not an observed diagnostic.
-    if inside_quotes(lower, sev_pos) {
+    // A successful source read quotes examples, not observed diagnostics.
+    // Command output and failed tools may legitimately return JSON/quoted
+    // diagnostics, so do not discard those just because they contain quotes.
+    if strict && inside_quotes(lower, sev_pos) {
         return false;
     }
     if !has_code_token(lower) {
@@ -723,8 +724,11 @@ mod tests {
                     // error TS2304: legacy fixture only\n\
                     *    error TS2304: doc comment string\n";
         assert!(extract_key_facts(text, "read", false).is_empty());
-        // Failed tools do not turn quoted source or comments into facts.
-        assert!(extract_key_facts(text, "read", true).is_empty());
+        // Failed results can legitimately carry a quoted JSON diagnostic.
+        assert_eq!(
+            extract_key_facts(r#"{"message":"fatal code=E_PARSE_FAIL"}"#, "read", true),
+            vec![r#"{"message":"fatal code=E_PARSE_FAIL"}"#.to_string()]
+        );
         // Anchored (unquoted) diagnostics still count, even from a real read.
         assert_eq!(
             extract_key_facts("error TS2304: Cannot find name 'foo'\n", "read", false),
