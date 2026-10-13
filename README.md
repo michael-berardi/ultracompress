@@ -60,8 +60,11 @@ pi install ./extension
 ```
 
 The release also provides a Developer ID-signed, notarized macOS arm64 CLI
-archive and checksums. UltraTerm bundles the bridge with its managed Steak Pi
-runtime. Do not load the standalone extension alongside Steak Pi's copy.
+archive, signed installer and checksums. The installer places the CLI in
+`/usr/local/bin`. Existing source installations should use the build steps above
+to replace their `~/.local/bin` copy. UltraTerm bundles the bridge with its
+managed Steak Pi runtime. Do not load the standalone extension alongside
+Steak Pi's copy.
 
 VCC compaction and raw-history recall work without any optional codec. The
 adapter falls back to Pi's core compaction when the bridge is unavailable or fails.
