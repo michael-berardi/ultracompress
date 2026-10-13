@@ -29,6 +29,9 @@ const cases = [
   { name: 'huge-line-followed-by-error', results: [result(`${'x'.repeat(1100000)}\nerror TS1005: ';' expected\n`)], codes: ['TS1005'] },
   { name: 'source-negative', results: [result('const fake = "error TS2304: fixture code=E_FAKE";\n// error TS2305: code=E_COMMENT\nerror("code=E_CALL");\n', 'read')], codes: [], empty: true },
   { name: 'legacy', results: [result('E-8341-DEPLOY fatal rollback initiated\n')], codes: ['E-8341-DEPLOY'] },
+  { name: 'legacy-log-read', results: [result('E-8341-DEPLOY fatal rollback initiated\nAUTH-123-FAIL fatal token rejected\n', 'read')], codes: ['E-8341-DEPLOY', 'AUTH-123-FAIL'] },
+  { name: 'final-failure-after-warnings', results: [result(`warning code=W_FIRST\nwarning code=W_SECOND\nwarning code=W_THIRD\nwarning code=W_FOURTH\n${filler}fatal code=E_FINAL_FAILURE\n`)], codes: ['E_FINAL_FAILURE'] },
+  { name: 'timestamped-log-read', results: [result('[2026-10-13T17:00:00Z] error code=E_TIMESTAMP\n[ERROR] code=E_LEVEL\n2026-10-13 17:00:00 error code=E_CLOCK\n', 'read')], codes: ['E_TIMESTAMP', 'E_LEVEL', 'E_CLOCK'] },
   { name: 'failed-json-diagnostic', results: [result('{"message":"fatal code=E_PARSE_FAIL"}\n', 'bash', true)], codes: ['E_PARSE_FAIL'] },
   { name: 'distinct-codes', results: [result('error TS2304: missing foo\nerror TS2305: missing bar\n')], codes: ['TS2304', 'TS2305'] },
   { name: 'dedup-per-result', results: [result('error TS2304: missing foo\n'.repeat(8) + 'error TS2305: missing bar\n')], codes: ['TS2304', 'TS2305'], facts: 2 },
@@ -54,14 +57,18 @@ try {
     const input = entriesFor(fixture);
     const b = run(baseline, input), c = run(candidate, input);
     const bf = section(b.summary, 'Key Facts'), cf = section(c.summary, 'Key Facts');
-    const count = (facts) => fixture.codes.filter(code => facts.some(f => f.includes(code))).length;
+    const carries = (fact, code) => {
+      const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?<![A-Za-z0-9_-])${escaped}(?![A-Za-z0-9_-])`).test(fact);
+    };
+    const count = (facts) => fixture.codes.filter(code => facts.some(f => carries(f, code))).length;
     const bk = count(bf), ck = count(cf);
     report.intendedCodes += fixture.codes.length; report.baselineKept += bk; report.candidateKept += ck;
     report.baselineChars += b.summary.length; report.candidateChars += c.summary.length;
     if (fixture.empty) { report.baselineFalseFacts += bf.length; report.candidateFalseFacts += cf.length; }
-    if (ck !== fixture.codes.length) report.failures.push(`${fixture.name}: missing intended code(s): ${fixture.codes.filter(code => !cf.some(f => f.includes(code))).join(', ')}`);
+    if (ck !== fixture.codes.length) report.failures.push(`${fixture.name}: missing intended code(s): ${fixture.codes.filter(code => !cf.some(f => carries(f, code))).join(', ')}`);
     if (fixture.empty && cf.length) report.failures.push(`${fixture.name}: false diagnostic fact(s)`);
-    if (cf.length > 10 || cf.some(f => [...f].length > 240)) report.failures.push(`${fixture.name}: fact count/length budget exceeded`);
+    if (cf.length > 10 || cf.some(f => Buffer.byteLength(f, 'utf8') > 240)) report.failures.push(`${fixture.name}: fact count/length budget exceeded`);
     if (fixture.facts !== undefined && cf.length !== fixture.facts) report.failures.push(`${fixture.name}: expected ${fixture.facts} distinct facts, got ${cf.length}`);
     if (withoutFacts(b.summary) !== withoutFacts(c.summary) || b.first_kept_entry_id !== c.first_kept_entry_id) report.failures.push(`${fixture.name}: non-diagnostic context/cut changed`);
     if (c.summary.length - b.summary.length > 2500) report.failures.push(`${fixture.name}: >2500 summary characters added`);

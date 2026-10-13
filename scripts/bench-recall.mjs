@@ -22,14 +22,28 @@ const repo = path.join(here, "..");
 const args = process.argv.slice(2);
 const argOf = (name, dflt) => {
   const i = args.indexOf(name);
-  return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
+  if (i < 0) return dflt;
+  if (!args[i + 1] || args[i + 1].startsWith('--')) {
+    console.error(`Missing value for ${name}`);
+    process.exit(2);
+  }
+  return args[i + 1];
 };
 const ULTRACOMPRESS = argOf("--bin", path.join(repo, "target", "release", "ultracompress"));
-const K = parseInt(argOf("--k", "5"), 10);
-const SAMPLES = parseInt(argOf("--samples", "12"), 10);
+const K = Number(argOf("--k", "5"));
+const SAMPLES = Number(argOf("--samples", "12"));
 const MIN_MESSAGES = 40;
 const MAX_FILE_MB = Number(argOf("--max-file-mb", "24"));
 const MAX_SESSIONS = Number(argOf("--max", "Infinity"));
+if (!Number.isFinite(MAX_FILE_MB) || MAX_FILE_MB <= 0) {
+  console.error('--max-file-mb must be a positive finite number'); process.exit(2);
+}
+if (MAX_SESSIONS !== Infinity && (!Number.isSafeInteger(MAX_SESSIONS) || MAX_SESSIONS < 1)) {
+  console.error('--max must be a positive integer'); process.exit(2);
+}
+if (!Number.isSafeInteger(K) || K < 1 || K > 20 || !Number.isSafeInteger(SAMPLES) || SAMPLES < 1) {
+  console.error('--k must be 1..20 and --samples must be a positive integer'); process.exit(2);
+}
 
 const ultracompress = (args_, stdin) =>
   JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8", timeout: 10000, maxBuffer: 64 * 1024 * 1024 }));

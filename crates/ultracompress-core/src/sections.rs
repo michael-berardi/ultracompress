@@ -274,8 +274,20 @@ fn extract_key_facts(text: &str, tool_name: &str, is_error: bool) -> Vec<String>
     }
     let strict = is_source_read(tool_name) && !is_error;
     let mut seen_keys: Vec<String> = Vec::new();
-    for seg in fact_scan_segments(text) {
-        for line in seg.lines() {
+    let recent_first = text.len() > FACT_SCAN_BYTES;
+    let mut segments = fact_scan_segments(text);
+    if recent_first {
+        // In a long log the final failure must not be crowded out by early
+        // warnings. Small outputs retain the established first-fact ordering.
+        segments.reverse();
+    }
+    for seg in segments {
+        let mut lines = seg.lines();
+        while let Some(line) = if recent_first {
+            lines.next_back()
+        } else {
+            lines.next()
+        } {
             let l = line.trim();
             // Length gate *before* any allocation: a >1 MiB single line is
             // never lowercased or cloned.
@@ -409,7 +421,11 @@ fn is_diagnostic_line(lower: &str, strict: bool) -> bool {
     if !has_code_token(lower) {
         return false;
     }
-    !strict || starts_with_severity(lower) || has_location_prefix(lower, sev_pos)
+    !strict
+        || starts_with_severity(lower)
+        || has_location_prefix(lower, sev_pos)
+        || starts_with_diagnostic_code(lower)
+        || has_log_prefix(lower, sev_pos)
 }
 
 fn starts_with_severity(lower: &str) -> bool {
@@ -418,6 +434,60 @@ fn starts_with_severity(lower: &str) -> bool {
             .strip_prefix(token)
             .is_some_and(|rest| rest.starts_with(':') || rest.starts_with(char::is_whitespace))
     }) || lower.starts_with("npm err!")
+}
+
+/// A code-prefixed log line is still a diagnostic when read from a file.
+/// Keep this anchored so source expressions containing codes do not qualify.
+fn starts_with_diagnostic_code(lower: &str) -> bool {
+    let first = lower
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(':');
+    if has_letter_digit_code(first) {
+        return true;
+    }
+    let Some((prefix, rest)) = first.split_once('-') else {
+        return false;
+    };
+    let Some((digits, label)) = rest.split_once('-') else {
+        return false;
+    };
+    (1..=5).contains(&prefix.len())
+        && prefix.bytes().all(|c| c.is_ascii_alphabetic())
+        && digits.len() >= 2
+        && digits.bytes().all(|c| c.is_ascii_digit())
+        && !label.is_empty()
+        && label
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+}
+
+/// Recognize common timestamp and bracketed-level prefixes in log reads.
+fn has_log_prefix(lower: &str, sev_pos: usize) -> bool {
+    if let Some((level, rest)) = lower.strip_prefix('[').and_then(|s| s.split_once(']')) {
+        if SEVERITY_TOKENS.contains(&level)
+            && (rest.starts_with(':') || rest.starts_with(char::is_whitespace))
+        {
+            return true;
+        }
+    }
+    let prefix = lower[..sev_pos]
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let bytes = prefix.as_bytes();
+    bytes.len() >= 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[..4]
+            .iter()
+            .chain(&bytes[5..7])
+            .chain(&bytes[8..10])
+            .all(u8::is_ascii_digit)
+        && bytes[10..].iter().all(|c| {
+            c.is_ascii_digit() || matches!(c, b't' | b'z' | b':' | b'+' | b'-' | b'.' | b' ')
+        })
 }
 
 /// `src/a.ts(3,5): error TS2304:` / `src/a.ts:3:5 - error TS2304:` shapes.
@@ -701,8 +771,11 @@ mod tests {
         assert!(text.len() > FACT_SCAN_BYTES);
         let facts = extract_key_facts(&text, "bash", false);
         assert_eq!(facts.len(), 2, "{facts:?}");
-        assert!(facts[0].contains("E_AUTH_FAIL"), "{facts:?}");
-        assert!(facts[1].contains("WARN_RATE_LIMIT"), "{facts:?}");
+        assert!(facts.iter().any(|f| f.contains("E_AUTH_FAIL")), "{facts:?}");
+        assert!(
+            facts.iter().any(|f| f.contains("WARN_RATE_LIMIT")),
+            "{facts:?}"
+        );
     }
 
     #[test]
@@ -817,6 +890,44 @@ mod tests {
     fn clipped_single_lines_are_not_facts() {
         let text = format!("fatal code=E_FAKE{}continued payload", " ".repeat(40_000));
         assert!(extract_key_facts(&text, "bash", false).is_empty());
+    }
+
+    #[test]
+    fn successful_log_reads_keep_code_prefixed_diagnostics() {
+        let line = "E-8341-DEPLOY fatal rollback initiated";
+        assert_eq!(
+            extract_key_facts(line, "read", false),
+            vec![line.to_string()]
+        );
+        let auth = "AUTH-123-FAIL fatal token rejected";
+        assert_eq!(
+            extract_key_facts(auth, "read", false),
+            vec![auth.to_string()]
+        );
+        assert!(extract_key_facts(
+            "const CODE = \"E-8341-DEPLOY fatal rollback\";",
+            "read",
+            false
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn successful_log_reads_keep_timestamp_and_level_prefixes() {
+        let text = "[2026-10-13T17:00:00Z] error code=E_TIMESTAMP\n[ERROR] code=E_LEVEL\n2026-10-13 17:00:00 error code=E_CLOCK\n";
+        assert_eq!(extract_key_facts(text, "read", false).len(), 3);
+    }
+
+    #[test]
+    fn long_logs_prioritize_final_failure_over_early_warnings() {
+        let text = format!(
+            "{}{}fatal code=E_FINAL_FAILURE\n",
+            "warning code=W_EARLY\n".repeat(8),
+            filler(2000)
+        );
+        let facts = extract_key_facts(&text, "bash", false);
+        assert!(facts[0].contains("E_FINAL_FAILURE"), "{facts:?}");
+        assert!(facts.len() <= MAX_FACTS_PER_RESULT);
     }
 
     #[test]

@@ -8,8 +8,8 @@
  * token usage (input + cacheRead + cacheWrite of the last assistant call).
  *
  * Modes compared:
- *   stock-pi   LLM summary (~1.2k tok est) + 20k-token verbatim tail,
- *              history destroyed (no recall)
+ *   stock-pi   LLM summary (~1.2k tok est) + 20k-token verbatim tail;
+ *              raw session records remain on disk
  *   vcc-only   ultracompress compact --policy vcc   (deterministic brief, VCC only)
  *   ultracompress-auto    ultracompress compact (auto) + live transforms on the kept tail
  *
@@ -27,14 +27,28 @@ const repo = path.join(here, "..");
 const args = process.argv.slice(2);
 const argOf = (name, dflt) => {
   const i = args.indexOf(name);
-  return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
+  if (i < 0) return dflt;
+  if (!args[i + 1] || args[i + 1].startsWith('--')) {
+    console.error(`Missing value for ${name}`);
+    process.exit(2);
+  }
+  return args[i + 1];
 };
 const ULTRACOMPRESS = argOf("--bin", path.join(repo, "target", "release", "ultracompress"));
 const OUT = argOf("--out", null);
 const MIN_MESSAGES = 30; // only sessions big enough to ever compact
-const MIN_RAW_TOKENS = parseInt(argOf("--min-raw", "40000"), 10); // compaction comparisons are meaningless below this
+const MIN_RAW_TOKENS = Number(argOf("--min-raw", "40000")); // compaction comparisons are meaningless below this
 const MAX_FILE_MB = Number(argOf("--max-file-mb", "24"));
 const MAX_SESSIONS = Number(argOf("--max", "Infinity"));
+if (!Number.isFinite(MAX_FILE_MB) || MAX_FILE_MB <= 0) {
+  console.error('--max-file-mb must be a positive finite number'); process.exit(2);
+}
+if (MAX_SESSIONS !== Infinity && (!Number.isSafeInteger(MAX_SESSIONS) || MAX_SESSIONS < 1)) {
+  console.error('--max must be a positive integer'); process.exit(2);
+}
+if (!Number.isSafeInteger(MIN_RAW_TOKENS) || MIN_RAW_TOKENS < 0) {
+  console.error('--min-raw must be a nonnegative integer'); process.exit(2);
+}
 const STOCK_SUMMARY_TOKENS = 1200; // Pi's structured LLM summary, ~1.2k tokens
 const STOCK_KEEP_RECENT = 20_000; // Pi default keepRecentTokens
 
