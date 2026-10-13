@@ -33,11 +33,13 @@ const ULTRACOMPRESS = argOf("--bin", path.join(repo, "target", "release", "ultra
 const OUT = argOf("--out", null);
 const MIN_MESSAGES = 30; // only sessions big enough to ever compact
 const MIN_RAW_TOKENS = parseInt(argOf("--min-raw", "40000"), 10); // compaction comparisons are meaningless below this
+const MAX_FILE_MB = Number(argOf("--max-file-mb", "24"));
+const MAX_SESSIONS = Number(argOf("--max", "Infinity"));
 const STOCK_SUMMARY_TOKENS = 1200; // Pi's structured LLM summary, ~1.2k tokens
 const STOCK_KEEP_RECENT = 20_000; // Pi default keepRecentTokens
 
 const ultracompress = (args_, stdin) =>
-  JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }));
+  JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8", timeout: 10000, maxBuffer: 64 * 1024 * 1024 }));
 
 function* sessionFiles() {
   const root = path.join(os.homedir(), ".pi", "agent", "sessions");
@@ -84,8 +86,12 @@ const fmt = (n) => n.toLocaleString("en-US");
 const pct = (x) => `${x.toFixed(1)}%`;
 
 const results = [];
+let skippedOversize = 0;
+let failures = 0;
 for (const file of sessionFiles()) {
+  if (results.length >= MAX_SESSIONS) break;
   try {
+    if (fs.statSync(file).size > MAX_FILE_MB * 1024 * 1024) { skippedOversize++; continue; }
     const { entries, messages, usage } = analyze(file);
     if (messages.length < MIN_MESSAGES) continue;
 
@@ -94,6 +100,7 @@ for (const file of sessionFiles()) {
     const measuredTokens = usage ? (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : 0;
     const cpt = measuredTokens > 500 && totalChars > 1000 ? totalChars / measuredTokens : 3.8;
     const raw = measuredTokens > 500 ? measuredTokens : Math.round(totalChars / 3.8);
+    if (raw < MIN_RAW_TOKENS) continue;
 
     // stock-pi: LLM summary + min(20k, tail). Tail = last user turn onward,
     // approximated by walking back until 20k tokens of content gathered.
@@ -135,12 +142,11 @@ for (const file of sessionFiles()) {
             modelVision: true,
           });
           transformSaved = tr.stats.tokens_before - tr.stats.tokens_after;
-        } catch { /* transforms optional */ }
+        } catch (err) { throw new Error(`transform failed: ${err.code ?? err.name}`); }
       }
     }
     const autoAfter = Math.max(summaryTokens, auto.stats.tokens_after_est - transformSaved);
 
-    if (raw < MIN_RAW_TOKENS) continue; // below compaction territory
     results.push({
       file: path.basename(file).slice(0, 18),
       msgs: messages.length,
@@ -154,9 +160,13 @@ for (const file of sessionFiles()) {
       stockSavings: (1 - stockAfter / raw) * 100,
     });
   } catch (err) {
-    console.error(`skip ${path.basename(file)}: ${String(err).slice(0, 120)}`);
+    failures++;
+    console.error(`skip ${path.basename(file)}: ${err.code ?? err.message}`);
   }
 }
+
+console.error(`Excluded ${skippedOversize} files >${MAX_FILE_MB}MiB; failed ${failures} inputs (not successes).`);
+if (failures || !results.length) process.exitCode = 1;
 
 // Report
 const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -198,7 +208,7 @@ console.log(
   pct(avg(results.map((r) => r.autoSavings))),
 );
 console.log(
-  "RECALL   stock-pi: none (history destroyed) · vcc-only: lossless · ultracompress-auto: lossless\n",
+  "RECALL   raw session records are retained; retrieval accuracy is not measured by this footprint fixture.\n",
 );
 
 if (OUT) {

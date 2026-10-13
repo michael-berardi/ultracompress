@@ -28,9 +28,11 @@ const ULTRACOMPRESS = argOf("--bin", path.join(repo, "target", "release", "ultra
 const K = parseInt(argOf("--k", "5"), 10);
 const SAMPLES = parseInt(argOf("--samples", "12"), 10);
 const MIN_MESSAGES = 40;
+const MAX_FILE_MB = Number(argOf("--max-file-mb", "24"));
+const MAX_SESSIONS = Number(argOf("--max", "Infinity"));
 
 const ultracompress = (args_, stdin) =>
-  JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8" }));
+  JSON.parse(execFileSync(ULTRACOMPRESS, args_, { input: stdin ? JSON.stringify(stdin) : undefined, encoding: "utf8", timeout: 10000, maxBuffer: 64 * 1024 * 1024 }));
 
 function* sessionFiles() {
   const root = path.join(os.homedir(), ".pi", "agent", "sessions");
@@ -70,10 +72,16 @@ let totalSamples = 0;
 let hitAt1 = 0;
 let hitAtK = 0;
 const perSession = [];
+let skippedOversize = 0;
+let failures = 0;
 
 for (const file of sessionFiles()) {
+  if (perSession.length >= MAX_SESSIONS) break;
   let raw;
-  try { raw = fs.readFileSync(file, "utf8"); } catch { continue; }
+  try {
+    if (fs.statSync(file).size > MAX_FILE_MB * 1024 * 1024) { skippedOversize++; continue; }
+    raw = fs.readFileSync(file, "utf8");
+  } catch (err) { failures++; console.error(`input failed: ${err.code ?? err.name}`); continue; }
   const entries = [];
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
@@ -86,13 +94,15 @@ for (const file of sessionFiles()) {
   let compacted;
   try {
     compacted = ultracompress(["compact", "--policy", "auto", "--vision", "on", "--keep-default"], { entries });
-  } catch { continue; }
+  } catch (err) { failures++; console.error(`compact failed: ${err.code ?? err.name}`); continue; }
 
   // Sample pre-cut tool results (the compacted-away span).
   const cutIdx = messages.findIndex((e) => e.id === compacted.first_kept_entry_id);
-  const away = messages.slice(0, cutIdx > 0 ? cutIdx : Math.floor(messages.length / 2));
+  if (cutIdx < 0) { failures++; console.error("compact cut not found; excluding input"); continue; }
+  const away = messages.slice(0, cutIdx);
   const blocks = [];
   for (const m of away) {
+    if (m?.message?.role !== "toolResult") continue;
     const c = m?.message?.content;
     if (!Array.isArray(c)) continue;
     for (const b of c) {
@@ -111,8 +121,8 @@ for (const file of sessionFiles()) {
     if (!q.trim()) continue;
     let res;
     try {
-      res = ultracompress(["recall", "--session", file, "--query", q, "--per-page", String(K)]);
-    } catch { continue; }
+      res = ultracompress(["recall", "--session", file, "--scope", "all", "--query", q, "--per-page", String(K)]);
+    } catch (err) { failures++; console.error(`recall failed: ${err.code ?? err.name}`); continue; }
     totalSamples++;
     sN++;
     const ids = res.hits.slice(0, K).map((h) => h.entry_id);
@@ -125,6 +135,8 @@ for (const file of sessionFiles()) {
   }
 }
 
+console.error(`Excluded ${skippedOversize} files >${MAX_FILE_MB}MiB; failed ${failures} operations (not successes).`);
+if (failures || !totalSamples) process.exitCode = 1;
 console.log(`\nRecall quality after UltraCompress compaction (top-${K}, real sessions)\n`);
 for (const p of perSession) {
   console.log(

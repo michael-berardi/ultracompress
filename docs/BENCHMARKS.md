@@ -1,5 +1,55 @@
 # UltraCompress — Benchmarks
 
+## 0.4.1 diagnostic-retention gate
+
+Matched deterministic fixtures compare the 0.4.0 CLI with 0.4.1 on identical
+inputs. This is a correctness regression gate, not a production accuracy or
+cost estimate.
+
+| Measure | 0.4.0 | 0.4.1 |
+| --- | ---: | ---: |
+| Intended literal codes in Key Facts (12 fixtures) | 2/23 | 23/23 |
+| False facts in the source-read negative fixture | 3 | 0 |
+| Total summary characters across fixtures | 5,648 | 6,280 |
+
+Fixtures cover long-log head/tail diagnostics, TypeScript and npm errors,
+Unicode window boundaries, a megabyte single line, source-code strings,
+distinct codes, exact duplicate facts and the ten-fact extraction limit.
+Diagnostic scanning examines at most 32 KiB per result (16 KiB head and tail
+for larger outputs), with up to four facts per result and ten per extraction.
+Lines longer than 240 bytes and the unscanned middle of large logs are omitted
+from Key Facts; raw-history recall still has the original. Earlier merged
+facts retain the existing sticky-section semantics.
+
+A separate frozen-input comparison completed on 30 unlabelled Pi sessions:
+non-diagnostic sections and the kept-tail cut were unchanged in all 30.
+Total summary characters changed from 439,401 to 437,488. The diagnostic set
+added 62 facts and removed 68; these are set changes, **not** labelled
+correctness or error-resolution judgments. Inputs are the first qualifying
+sorted session files, at most 4 MiB, at least 30 messages and 160,000 serialized
+content characters. Private snapshots are not distributed.
+
+Reproduce the labelled gate with both binaries:
+
+```sh
+node scripts/bench-diagnostics.mjs --baseline /path/to/0.4.0 --candidate target/release/ultracompress
+```
+
+For a private, hash-verified paired corpus:
+
+```sh
+node scripts/bench-brief.mjs --freeze /private/path/uc-corpus --max 30
+node scripts/bench-brief.mjs --corpus /private/path/uc-corpus --baseline /path/to/0.4.0 --candidate target/release/ultracompress
+```
+
+The offline and recall scripts accept `--max N` and `--max-file-mb N` (24 MiB
+by default), bound each CLI invocation to ten seconds, and report failures and
+oversized exclusions rather than treating them as successes. The old
+same-tool-success heuristic for "resolved errors" is not used. An unrelated
+successful command does not prove an earlier failure was fixed.
+
+## Historical compaction and recall measurements
+
 Historical measurements from before the optional codec removal; rerun to measure
 the current VCC/snap-only behavior. Three benchmark families:
 
