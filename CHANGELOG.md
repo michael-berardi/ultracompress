@@ -7,8 +7,10 @@ Hermes adapter 0.1.0.
 
 - Diagnostic extraction no longer skips every tool output over 20,000 bytes.
   A bounded head/tail scan retains literal error codes from long logs, including
-  TypeScript and npm diagnostics. Fact counts and line lengths remain capped;
-  omitted detail remains searchable through raw-history recall.
+  TypeScript and npm diagnostics. Recent long-log diagnostics take priority;
+  code-prefixed and timestamped log reads remain recognized. Fact counts and
+  line lengths remain capped; omitted detail remains searchable through
+  raw-history recall.
 - Added matched baseline/candidate diagnostic fixtures and a hash-verified,
   frozen-input corpus comparison. Benchmarks bound individual subprocesses
   and report excluded oversized inputs and failed operations.

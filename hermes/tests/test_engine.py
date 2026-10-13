@@ -40,18 +40,30 @@ class EngineIntegration(unittest.TestCase):
         # and put them back afterwards.
         cls.launchers = {f: f.read_bytes() for f in Path(HERMES_DIR).expanduser().joinpath(".hermes", "bin").glob("*")
                          if f.is_file()}
+        cls.previous_env = {key: os.environ.get(key) for key in
+                            ("HERMES_HOME", "HERMES_DISABLE_LAZY_INSTALLS")}
         cls.home = tempfile.mkdtemp(prefix="uc-hermes-home-")
-        os.environ["HERMES_HOME"] = cls.home
-        shutil.copytree(ADAPTER, Path(cls.home, "plugins", "ultracompress"))
+        cls.addClassCleanup(cls.cleanup)
+        # Activate the host's already-installed dependencies before isolating
+        # session/plugin data. A fresh home must never trigger package installs
+        # or rewrite the host's launchers during an adapter test.
+        os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
         sys.path.insert(0, str(Path(HERMES_DIR).expanduser()))
         import hermes_bootstrap  # noqa: F401  (Hermes' own import setup)
+        os.environ["HERMES_HOME"] = cls.home
+        shutil.copytree(ADAPTER, Path(cls.home, "plugins", "ultracompress"))
         from plugins.context_engine import discover_context_engines, load_context_engine
         cls.discovered = discover_context_engines()
         cls.load = staticmethod(load_context_engine)
 
     @classmethod
-    def tearDownClass(cls):
+    def cleanup(cls):
         shutil.rmtree(cls.home, ignore_errors=True)
+        for key, value in cls.previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         rewritten = [f for f, data in cls.launchers.items() if f.read_bytes() != data]
         for f in rewritten:
             f.write_bytes(cls.launchers[f])

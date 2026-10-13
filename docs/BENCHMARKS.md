@@ -8,22 +8,26 @@ cost estimate.
 
 | Measure | 0.4.0 | 0.4.1 |
 | --- | ---: | ---: |
-| Intended literal codes in Key Facts (13 fixtures) | 3/24 | 24/24 |
+| Intended literal codes in Key Facts (16 fixtures) | 8/30 | 30/30 |
 | False facts in the source-read negative fixture | 3 | 0 |
-| Total summary characters across fixtures | 6,034 | 6,666 |
+| Total summary characters across fixtures | 7,396 | 8,141 |
 
 Fixtures cover long-log head/tail diagnostics, TypeScript and npm errors,
 Unicode window boundaries, a megabyte single line, source-code strings,
-quoted JSON diagnostics from failed tools, distinct codes, exact duplicate
-facts and the ten-fact extraction limit.
+quoted JSON diagnostics from failed tools, code-prefixed and timestamped log
+reads, a final failure after early warnings, distinct codes, exact duplicate facts and the
+ten-fact extraction limit.
 Diagnostic scanning examines at most 32 KiB per result (16 KiB head and tail
 for larger outputs), with up to four facts per result and ten per extraction.
+Recent diagnostics take priority in long outputs; small outputs retain their
+established fact order.
 Lines longer than 240 bytes and the unscanned middle of large logs are omitted
 from Key Facts; raw-history recall still has the original. Earlier merged
 facts retain the existing sticky-section semantics.
 
 A separate frozen-input comparison completed on 30 unlabelled Pi sessions:
 non-diagnostic sections and the kept-tail cut were unchanged in all 30.
+One pair timed out initially; retrying only that input completed the comparison.
 Total summary characters changed from 439,401 to 438,344. The diagnostic set
 added 63 facts and removed 62; these are set changes, **not** labelled
 correctness or error-resolution judgments. Inputs are the first qualifying
@@ -45,9 +49,8 @@ node scripts/bench-brief.mjs --corpus /private/path/uc-corpus --baseline /path/t
 
 The offline and recall scripts accept `--max N` and `--max-file-mb N` (24 MiB
 by default), bound each CLI invocation to ten seconds, and report failures and
-oversized exclusions rather than treating them as successes. The old
-same-tool-success heuristic for "resolved errors" is not used. An unrelated
-successful command does not prove an earlier failure was fixed.
+oversized exclusions rather than treating them as successes. Invalid numeric
+limits are rejected before reading sessions.
 
 ## Historical compaction and recall measurements
 
@@ -171,5 +174,4 @@ Findings:
 cargo build --release
 node scripts/bench-offline.mjs --min-raw 40000
 node scripts/bench-recall.mjs
-bash scripts/live-bench.sh all && node scripts/live-bench-report.mjs
 ```
