@@ -4,7 +4,7 @@ Issues and focused pull requests are welcome.
 
 ## Development
 
-Requirements: Rust 1.85+, Node.js 22.19+, and Pi 0.85.x for extension smoke tests.
+Requirements: Rust 1.85+, Node.js 22.19+, and Pi 0.85.x or 1.0.4+ for extension smoke tests.
 
 ```bash
 cargo fmt --all -- --check
@@ -14,6 +14,7 @@ cargo build --release
 
 cd extension
 npm ci
+npm audit
 npm test
 npm run typecheck
 ```
