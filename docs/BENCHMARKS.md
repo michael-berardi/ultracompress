@@ -8,13 +8,14 @@ cost estimate.
 
 | Measure | 0.4.0 | 0.4.1 |
 | --- | ---: | ---: |
-| Intended literal codes in Key Facts (12 fixtures) | 2/23 | 23/23 |
+| Intended literal codes in Key Facts (13 fixtures) | 3/24 | 24/24 |
 | False facts in the source-read negative fixture | 3 | 0 |
-| Total summary characters across fixtures | 5,648 | 6,280 |
+| Total summary characters across fixtures | 6,034 | 6,666 |
 
 Fixtures cover long-log head/tail diagnostics, TypeScript and npm errors,
 Unicode window boundaries, a megabyte single line, source-code strings,
-distinct codes, exact duplicate facts and the ten-fact extraction limit.
+quoted JSON diagnostics from failed tools, distinct codes, exact duplicate
+facts and the ten-fact extraction limit.
 Diagnostic scanning examines at most 32 KiB per result (16 KiB head and tail
 for larger outputs), with up to four facts per result and ten per extraction.
 Lines longer than 240 bytes and the unscanned middle of large logs are omitted
@@ -23,8 +24,8 @@ facts retain the existing sticky-section semantics.
 
 A separate frozen-input comparison completed on 30 unlabelled Pi sessions:
 non-diagnostic sections and the kept-tail cut were unchanged in all 30.
-Total summary characters changed from 439,401 to 437,488. The diagnostic set
-added 62 facts and removed 68; these are set changes, **not** labelled
+Total summary characters changed from 439,401 to 438,344. The diagnostic set
+added 63 facts and removed 62; these are set changes, **not** labelled
 correctness or error-resolution judgments. Inputs are the first qualifying
 sorted session files, at most 4 MiB, at least 30 messages and 160,000 serialized
 content characters. Private snapshots are not distributed.

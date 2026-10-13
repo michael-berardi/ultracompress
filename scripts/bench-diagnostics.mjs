@@ -29,6 +29,7 @@ const cases = [
   { name: 'huge-line-followed-by-error', results: [result(`${'x'.repeat(1100000)}\nerror TS1005: ';' expected\n`)], codes: ['TS1005'] },
   { name: 'source-negative', results: [result('const fake = "error TS2304: fixture code=E_FAKE";\n// error TS2305: code=E_COMMENT\nerror("code=E_CALL");\n', 'read')], codes: [], empty: true },
   { name: 'legacy', results: [result('E-8341-DEPLOY fatal rollback initiated\n')], codes: ['E-8341-DEPLOY'] },
+  { name: 'failed-json-diagnostic', results: [result('{"message":"fatal code=E_PARSE_FAIL"}\n', 'bash', true)], codes: ['E_PARSE_FAIL'] },
   { name: 'distinct-codes', results: [result('error TS2304: missing foo\nerror TS2305: missing bar\n')], codes: ['TS2304', 'TS2305'] },
   { name: 'dedup-per-result', results: [result('error TS2304: missing foo\n'.repeat(8) + 'error TS2305: missing bar\n')], codes: ['TS2304', 'TS2305'], facts: 2 },
   { name: 'ten-fact-budget', results: Array.from({ length: 14 }, (_, i) => result(`error TS${3000 + i}: missing name\n`)), codes: Array.from({ length: 10 }, (_, i) => `TS${3000 + i}`), facts: 10 },
