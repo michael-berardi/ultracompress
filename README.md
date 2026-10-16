@@ -11,7 +11,7 @@ still searchable. $0 per compaction.**
 
 [![Latest release](https://img.shields.io/github/v/release/michael-berardi/ultracompress?label=release)](https://github.com/michael-berardi/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/michael-berardi/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
 
-[Install](#install) · [Claude Code](#claude-code) · [Hermes Agent](#hermes-agent) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
+[Install](#install) · [Claude Code](#claude-code) · [Carl](#carl) · [Hermes Agent](#hermes-agent) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
 
 </div>
 
@@ -22,8 +22,9 @@ builds a structured conversation brief without an LLM request, replaces bulky
 tool output with image frames when supported, and keeps the
 raw session on disk so a recall tool can still find anything that was
 condensed. It ships as a Rust CLI plus a [Pi coding agent](https://pi.dev)
-adapter, a standalone [Claude Code](#claude-code) plugin and a
-[Hermes Agent](#hermes-agent) context engine, all served by the same engine.
+adapter, a standalone [Claude Code](#claude-code) plugin, built-in support in
+[Carl](#carl) and a [Hermes Agent](#hermes-agent) context engine, all served by
+the same engine.
 
 Summary generation by another model call is a strange way to save model calls.
 UltraCompress skips the middleman: compaction runs locally in roughly 10–300
@@ -93,6 +94,17 @@ Full install, the binary lookup order, and uninstall:
 [`claude-code/README.md`](claude-code/README.md).
 
 **UltraTerm users already have this built in. Do not load both.**
+
+## Carl
+
+[Carl](https://github.com/michael-berardi/carl), the agent bot gateway, ships
+this repository's Pi adapter in `vendor/ultracompress` and turns it on by
+itself when it finds the `ultracompress` binary (`ULTRACOMPRESS_BIN`, then
+`~/.ultraterm/bin`, `~/.local/bin`, `~/.cargo/bin` and `PATH`). There is
+nothing to install beyond the binary. Carl compacts at its own context budget
+(`contextBudget`, 96k tokens by default) whatever the model's window is, and
+gives the agent `ultracompress_recall` over its own session transcripts. Set
+`"ultracompress": "off"` in `carl.json` to use the SDK's built-in compaction.
 
 ## Hermes Agent
 
