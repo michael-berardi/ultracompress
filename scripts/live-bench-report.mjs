@@ -88,7 +88,7 @@ for (const [name, wsDir, jsonl, secsFile] of [
 
 const fmtN = (n) => n.toLocaleString("en-US");
 const pct = (x) => `${x.toFixed(1)}%`;
-console.log(`\nLIVE benchmark — identical task, identical model (glm-5.3-flash), ~23.6k compaction threshold\n`);
+console.log(`\nLIVE benchmark — identical task, identical operator-chosen model, ~23.6k compaction threshold\n`);
 console.log(
   ["stack".padEnd(16), "billed-in".padStart(10), "(cache)".padStart(9), "out".padStart(7), "calls".padStart(6),
    "compactions".padStart(12), "cost".padStart(9), "wall".padStart(6), "correct"].join(" "),

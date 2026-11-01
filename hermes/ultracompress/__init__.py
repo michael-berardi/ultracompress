@@ -38,7 +38,7 @@ from agent.context_compressor import ContextCompressor
 from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, compose_brief,
                       conversation_view, find_binary, section, tool_only_brief, BRIEF_HEADING, to_pi_entries)
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"
 logger = logging.getLogger("plugins.ultracompress")
 
 PLUGIN_DIR = Path(__file__).resolve().parent

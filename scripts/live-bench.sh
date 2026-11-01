@@ -11,7 +11,7 @@ set -euo pipefail
 BENCH=/tmp/ultracompress-live-bench
 WS=$BENCH/ws
 OUT=$BENCH/results
-MODEL_PI="zai/glm-5.3-flash"
+MODEL_PI="${BENCH_MODEL:?set BENCH_MODEL to the model to benchmark}"
 THRESHOLD=23616
 STORE=~/.pi/agent/models-store.json
 ULTRACOMPRESS_EXT="$HOME/dev/ultracompress/extension/index.ts"
@@ -64,7 +64,7 @@ p = sys.argv[1]
 shutil.copy(p, p + ".ultracompress-bench-backup")
 m = json.load(open(p))
 for x in m["zai"]["models"]:
-    if x["id"] == "glm-5.3-flash":
+    if x["id"] == os.environ["BENCH_MODEL"]:
         x["contextWindow"] = 40000
 json.dump(m, open(p, "w"))
 print("contextWindow -> 40000 (threshold ~23.6k)")
@@ -111,7 +111,7 @@ run_omp() {
   omp config set snapcompact.toolResults true >/dev/null 2>&1 || true
   omp config set compaction.thresholdTokens "$THRESHOLD" >/dev/null 2>&1 || true
   local t0=$(date +%s)
-  (cd "$dir" && timeout 900 omp --model zai/glm-5.3-flash --mode json --no-session \
+  (cd "$dir" && timeout 900 omp --model "$MODEL_PI" --mode json --no-session \
       --approval-mode yolo --print "$(cat $BENCH/task.txt)" > "$OUT/omp.jsonl" 2> "$OUT/omp.err") || true
   echo "$(( $(date +%s) - t0 ))" > "$OUT/omp.secs"
   # Restore defaults.

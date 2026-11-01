@@ -35,7 +35,7 @@ You need Hermes Agent (tested with 0.21.5) and the `ultracompress` binary (see t
 [main README](../README.md#install)).
 
 ```sh
-git clone https://github.com/michael-berardi/ultracompress
+git clone https://github.com/your-github-username/ultracompress
 ln -s "$PWD/ultracompress/hermes/ultracompress" ~/.hermes/plugins/ultracompress
 hermes config set context.engine ultracompress
 hermes tools enable context_engine --platform cli        # the recall tool; repeat per platform
@@ -82,7 +82,7 @@ engine keeps the previous brief and adds one line naming the tools that ran, wit
 
 ## Measured
 
-One real Hermes Telegram session (GPT-6.1 Sol, 245 messages, about 190k tokens), compacted from
+One real Hermes Telegram session (an operator-chosen model, 245 messages, about 190k tokens), compacted from
 the same copy by Hermes' built-in summarizer and by this engine, then quizzed on five facts that
 only existed in the condensed part:
 

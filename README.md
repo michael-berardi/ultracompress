@@ -9,7 +9,7 @@ still searchable. $0 per compaction.**
 
 *The compaction layer for people who read their agent's bills.*
 
-[![Latest release](https://img.shields.io/github/v/release/michael-berardi/ultracompress?label=release)](https://github.com/michael-berardi/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/michael-berardi/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
+[![Latest release](https://img.shields.io/github/v/release/your-github-username/ultracompress?label=release)](https://github.com/your-github-username/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/your-github-username/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
 
 [Install](#install) · [Claude Code](#claude-code) · [Carl](#carl) · [Hermes Agent](#hermes-agent) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
 
@@ -54,7 +54,7 @@ Current release: **0.4.2**. Building from source requires Rust 1.85 or newer. Th
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.4.2 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.4.2 https://github.com/your-github-username/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -97,7 +97,7 @@ Full install, the binary lookup order, and uninstall:
 
 ## Carl
 
-[Carl](https://github.com/michael-berardi/carl), the agent bot gateway, ships
+[Carl](https://github.com/your-github-username/carl), the agent bot gateway, ships
 this repository's Pi adapter in `vendor/ultracompress` and turns it on by
 itself when it finds the `ultracompress` binary (`ULTRACOMPRESS_BIN`, then
 `~/.ultraterm/bin`, `~/.local/bin`, `~/.cargo/bin` and `PATH`). There is

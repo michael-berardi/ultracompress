@@ -9,7 +9,7 @@ kept the same amount (8 of 12).
 ## Results
 
 Measured 2026-09-23 on an Apple Silicon Mac, Claude Code 2.1.281, model
-`claude-opus-5-5`, UltraCompress 0.3.0. Token and duration figures are Claude
+one operator-chosen Claude model, UltraCompress 0.3.0. Token and duration figures are Claude
 Code's own `compactMetadata` for each compaction.
 
 | Session | Arm | Context before → after | Compaction time | Summary tokens sent to a model |
@@ -49,7 +49,7 @@ What this says:
 1. Copies one real, never-compacted transcript under a fresh session id
    (`prep.py`), so each arm starts from identical history.
 2. Resumes the copy in a detached tmux pane (`claude --resume <id> --model
-   claude-opus-5-5`) and runs `/compact`. The built-in arm starts Claude with
+   the operator's chosen Claude model) and runs `/compact`. The built-in arm starts Claude with
    `--settings '{"disableAllHooks":true}'`, which keeps the UltraCompress plugin
    from loading; the UltraCompress arm runs the plugin's `session.compact` hook.
 3. Reads Claude's `compact_boundary` record (`preTokens`, `postTokens`,

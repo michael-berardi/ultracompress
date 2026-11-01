@@ -3,15 +3,15 @@ resolver = "2"
 members = ["crates/ultracompress-core", "crates/ultracompress-cli"]
 
 [workspace.package]
-version = "0.4.2"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
 authors = ["Pareto Cybernetics"]
-homepage = "https://github.com/michael-berardi/ultracompress"
+homepage = "https://github.com/example/ultracompress"
 keywords = ["llm", "compaction", "context-window", "ai-agents", "claude-code"]
 categories = ["command-line-utilities", "compression", "development-tools"]
-repository = "https://github.com/michael-berardi/ultracompress"
+repository = "https://github.com/example/ultracompress"
 description = "UltraCompress — content-aware conversation compaction: VCC briefs, snap frames, lossless raw-history recall."
 
 [workspace.dependencies]

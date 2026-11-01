@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0 (2026-11-01) — Provider-neutral shipped files
+
+CLI/core 0.5.0, Pi adapter 0.5.0, Claude Code plugin 0.5.0, Hermes adapter 0.5.0.
+
+UltraCompress ships no built-in model, provider preference, fallback chain, paid-route
+grant or personal name. Every shipped file now carries neutral placeholders or requires
+the operator to name the model:
+
+- Documentation and install commands use `your-github-username` instead of the
+  maintainer's GitHub handle; the plugin author is the neutral `Alex`.
+- Benchmark scripts no longer default to a built-in model: `AB_MODEL` and `BENCH_MODEL`
+  must be set, and the scripts fail with a message naming the variable when they are
+  not. Benchmark documentation and report text use neutral wording.
+- `tests/test_neutrality.py` scans shipped source and documentation for model ids,
+  provider preferences and personal names. It fails on 0.4.2's tree and passes now.
+- No product behaviour changed: compaction, snap frames, recall, settings and the
+  Claude Code hook are unchanged.
+
 ## 0.4.2 (2026-10-13) — Development dependency security updates
 
 CLI/core 0.4.2, Pi adapter 0.4.0, unchanged Claude Code plugin 0.4.0 and

@@ -65,7 +65,7 @@ the current VCC/snap-only behavior. Three benchmark families:
    recover facts after compaction? Sampled real tool results, rare-term
    queries, top-k entry match.
 3. **Live** (`scripts/live-bench.sh` + `scripts/live-bench-report.mjs`) —
-   identical multi-step task, identical model (zai/glm-5.3-flash), identical
+   identical multi-step task, identical operator-chosen model, identical
    ~23.6k compaction threshold, three stacks: stock Pi, Pi + UltraCompress,
    OMP forced to snapcompact-only. Real billed tokens and cost from session
    usage records. Every completed run is reported — no cherry-picking.
@@ -124,7 +124,7 @@ stock Pi's retrieval accuracy is outside its scope.
 
 Task: read two ~44 KB logs fully + two JSON data files, count functions
 across 8 source files, extract exact error codes, write a formatted answer.
-Model: zai/glm-5.3-flash for all stacks. Threshold ≈ 23.6k tokens for all
+Model: one operator-chosen model for all stacks. Threshold ≈ 23.6k tokens for all
 stacks (Pi: 40k model window − 16,384 reserve; OMP: `compaction.thresholdTokens`).
 OMP configured to its best snapcompact posture
 (`methodOrder=["snapcompact"]`, `snapcompact.toolResults=true`, `shape=auto`).

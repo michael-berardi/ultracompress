@@ -12,7 +12,7 @@ call, and a recall tool that still finds what was condensed.**
 ## What it does
 
 This plugin replaces Claude Code's compaction summarizer with the
-[UltraCompress](https://github.com/michael-berardi/ultracompress) binary. When
+[UltraCompress](https://github.com/your-github-username/ultracompress) binary. When
 the session compacts — manually or automatically — the binary builds a
 structured summary of the earlier conversation locally. No model call for the
 summary, no compaction line on your provider bill, same output every time for
@@ -33,7 +33,7 @@ know who summarized what.
 You need the `ultracompress` binary (Rust 1.85+ to build):
 
 ```sh
-git clone --branch v0.4.2 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.4.2 https://github.com/your-github-username/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin && cp target/release/ultracompress ~/.local/bin/
@@ -123,4 +123,4 @@ same hooks compete for the same events, and neither wins gracefully.
   [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md) for what has actually been
   measured, on which fixtures.
 
-[MIT](../LICENSE) · part of [UltraCompress](https://github.com/michael-berardi/ultracompress)
+[MIT](../LICENSE) · part of [UltraCompress](https://github.com/your-github-username/ultracompress)

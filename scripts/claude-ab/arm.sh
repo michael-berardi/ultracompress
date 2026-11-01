@@ -6,7 +6,7 @@
 # stock = --settings disableAllHooks (Claude's built-in compaction);
 # ultracompress = the UltraCompress plugin's session.compact hook. Delete the copies after.
 set -u
-SRC=$1; ARM=$2; AB=${AB_DIR:?set AB_DIR to a private results directory}; T=${TMUX_BIN:-tmux}; HERE=$(cd "$(dirname "$0")" && pwd); MODEL=${AB_MODEL:-claude-opus-5-5}
+SRC=$1; ARM=$2; AB=${AB_DIR:?set AB_DIR to a private results directory}; T=${TMUX_BIN:-tmux}; HERE=$(cd "$(dirname "$0")" && pwd); MODEL=${AB_MODEL:?set AB_MODEL to the model to compare}
 ID=$(python3 $HERE/prep.py "$SRC" "${ARM_LABEL:-$ARM}"); SOCK=ut235ab
 EXTRA=""; [ "$ARM" = stock ] && EXTRA="--settings '{\"disableAllHooks\":true}'"
 cd "${AB_CWD:-$HOME}" && env -u TMUX -u TMUX_PANE -u CLAUDE_CODE_SESSION_ID -u CLAUDECODE $T -L $SOCK -f /dev/null new-session -d -s ab -x 160 -y 50 -c "${AB_CWD:-$HOME}" "claude --resume $ID --model $MODEL $EXTRA --debug-file $AB/$ARM-$SRC.debug"
