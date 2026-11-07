@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+Release assets are built by scripts/release.sh; 0.5.0 assets were attached after the fact with it.
+
 ## 0.5.0 (2026-11-01) — Provider-neutral shipped files
 
 CLI/core 0.5.0, Pi adapter 0.5.0, Claude Code plugin 0.5.0, Hermes adapter 0.5.0.
