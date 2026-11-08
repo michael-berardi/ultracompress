@@ -301,3 +301,7 @@ or tool proxy.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
 [MIT License](LICENSE). Report security issues privately rather than including
 credentials or session records in public issues.
+
+---
+
+Part of [Pareto Cybernetics](https://paretocybernetics.com/projects/ultracompress/): free, private, open-source tools for working with AI agents.
