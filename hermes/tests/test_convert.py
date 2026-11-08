@@ -98,16 +98,16 @@ class Sections(unittest.TestCase):
                      {"function": {"name": "mcp__overseer__overseer_status"}}]},
                  {"role": "tool", "content": "{}"},
                  {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "web_search"}}]}]
-        brief = convert.tool_only_brief(turns, "Earlier: Mike approved P-1.")
-        self.assertTrue(brief.startswith("Earlier: Mike approved P-1."))
+        brief = convert.tool_only_brief(turns, "Earlier: Morgan approved P-1.")
+        self.assertTrue(brief.startswith("Earlier: Morgan approved P-1."))
         self.assertIn("3 call(s)", brief)
         self.assertIn("mcp__overseer__overseer_status ×2", brief)
         self.assertIn("web_search", brief)
         self.assertNotIn("Earlier", convert.tool_only_brief(turns))
-        composed = convert.compose_brief("Earlier: Mike approved P-1.")
+        composed = convert.compose_brief("Earlier: Morgan approved P-1.")
         again = convert.tool_only_brief(turns, convert.section(composed, convert.BRIEF_HEADING))
         self.assertNotIn(convert.BRIEF_INTRO, again)
-        self.assertTrue(again.startswith("Earlier: Mike approved P-1."))
+        self.assertTrue(again.startswith("Earlier: Morgan approved P-1."))
 
 class FindBinary(unittest.TestCase):
     def test_explicit_then_env(self):
