@@ -17,6 +17,12 @@ still searchable. $0 per compaction.**
 
 ---
 
+## Download
+
+- **macOS, Apple silicon and Intel:** [UltraCompress-macos-universal.zip](https://github.com/your-github-username/ultracompress/releases/latest/download/UltraCompress-macos-universal.zip). Unzip it and copy `ultracompress` into your `PATH`. The binary is Developer ID-signed and notarized.
+- All releases, checksums (`SHA256SUMS`) and provenance: [latest release](https://github.com/your-github-username/ultracompress/releases/latest).
+- Linux and Windows: build from source, see [Install](#install).
+
 UltraCompress is content-aware context compaction for LLM coding agents. It
 builds a structured conversation brief without an LLM request, replaces bulky
 tool output with image frames when supported, and keeps the
@@ -37,6 +43,7 @@ require another context-management agent.
 
 ## What's new
 
+- **0.5.1**: one universal (arm64 + x86_64) notarized macOS CLI zip replaces the arm64 zip and pkg.
 - **0.4.2**: patched Pi adapter development dependencies and added Pi 1.0.4+
   support. Pi 0.85.x compatibility and diagnostic retention are unchanged.
 - **0.4.1**: diagnostic facts from long tool outputs survive in the brief.
@@ -50,11 +57,11 @@ require another context-management agent.
 
 ## Install
 
-Current release: **0.5.0**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and 1.0.4,
+Current release: **0.5.1**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and 1.0.4,
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.5.0 https://github.com/your-github-username/ultracompress
+git clone --branch v0.5.1 https://github.com/your-github-username/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -62,10 +69,9 @@ cp target/release/ultracompress ~/.local/bin/
 pi install ./extension
 ```
 
-The release also provides a Developer ID-signed, notarized macOS arm64 CLI
-archive, signed installer and checksums. The installer places the CLI in
-`/usr/local/bin`. Existing source installations should use the build steps above
-to replace their `~/.local/bin` copy. UltraTerm bundles the bridge with its
+The release's macOS CLI zip is universal (arm64 and x86_64) and Developer ID-signed
+and notarized; see [Download](#download). Existing source installations should use
+the build steps above to replace their `~/.local/bin` copy. UltraTerm bundles the bridge with its
 managed Steak Pi runtime. Do not load the standalone extension alongside
 Steak Pi's copy.
 

@@ -1,8 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (2026-11-10) — Universal macOS download
 
-Release assets are built by scripts/release.sh; 0.5.0 assets were attached after the fact with it.
+CLI/core 0.5.1. Pi adapter 0.5.0, Claude Code plugin 0.5.0 and Hermes adapter 0.1.0 are unchanged.
+
+- The macOS CLI is one universal (arm64 + x86_64) binary in `UltraCompress-macos-universal.zip`,
+  Developer ID-signed and notarized. It replaces the arm64-only zip.
+- The `.pkg` installer is no longer published. It carried the same CLI and only copied it to
+  `/usr/local/bin`; copy the binary from the zip into your `PATH` instead.
+- `scripts/release.sh` builds both architectures from the same locked source and no longer needs
+  the installer signing identity or package identifier.
+- The README has a Download section at the top with the direct macOS link.
 
 ## 0.5.0 (2026-11-01) — Provider-neutral shipped files
 
