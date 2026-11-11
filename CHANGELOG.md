@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- One-line installers for macOS, Linux and Windows: `scripts/install.sh` and `scripts/install.ps1`,
+  attached to each release. They verify the download's SHA-256 before installing, put `ultracompress`
+  on your PATH without sudo or profile edits, and re-running upgrades in place.
+- Linux (x86_64 and arm64, statically linked musl) and Windows (x86_64) binaries are now published as
+  release downloads, built by `scripts/build-release-cross.sh` in a native arm64 Rust container
+  (cross-compilation, no emulation). The signed macOS flow in `scripts/release.sh` is unchanged.
+- `scripts/test-install.sh` exercises the installers against a local release base on macOS, in an
+  Ubuntu container and under PowerShell 7 on Linux, including upgrade and corrupted-archive refusal.
+
 ## 0.5.1 (2026-11-10) — Universal macOS download
 
 CLI/core 0.5.1. Pi adapter 0.5.0, Claude Code plugin 0.5.0 and Hermes adapter 0.1.0 are unchanged.

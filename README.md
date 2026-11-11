@@ -20,8 +20,10 @@ still searchable. $0 per compaction.**
 ## Download
 
 - **macOS, Apple silicon and Intel:** [UltraCompress-macos-universal.zip](https://github.com/your-github-username/ultracompress/releases/latest/download/UltraCompress-macos-universal.zip). Unzip it and copy `ultracompress` into your `PATH`. The binary is Developer ID-signed and notarized.
+- **Linux, x86_64 and arm64:** [ultracompress-linux-x86_64.tar.gz](https://github.com/your-github-username/ultracompress/releases/latest/download/ultracompress-linux-x86_64.tar.gz) and [ultracompress-linux-arm64.tar.gz](https://github.com/your-github-username/ultracompress/releases/latest/download/ultracompress-linux-arm64.tar.gz). Statically linked (musl); they run on any distribution, glibc or musl.
+- **Windows, x86_64:** [ultracompress-windows-x86_64.zip](https://github.com/your-github-username/ultracompress/releases/latest/download/ultracompress-windows-x86_64.zip). Unzip it and put `ultracompress.exe` in a folder on your `PATH`.
 - All releases, checksums (`SHA256SUMS`) and provenance: [latest release](https://github.com/your-github-username/ultracompress/releases/latest).
-- Linux and Windows: build from source, see [Install](#install).
+- The one-line installers below do the download, checksum and `PATH` setup for you.
 
 UltraCompress is content-aware context compaction for LLM coding agents. It
 builds a structured conversation brief without an LLM request, replaces bulky
@@ -57,7 +59,33 @@ require another context-management agent.
 
 ## Install
 
-Current release: **0.5.1**. Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and 1.0.4,
+Current release: **0.5.1**. One line installs the `ultracompress` CLI on macOS, Linux or Windows.
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://github.com/your-github-username/ultracompress/releases/latest/download/install.sh | sh
+```
+
+Windows (PowerShell 5.1 or 7):
+
+```powershell
+irm https://github.com/your-github-username/ultracompress/releases/latest/download/install.ps1 | iex
+```
+
+What the installers do: they download the release for your platform (macOS: the signed universal zip;
+Linux: a static musl binary for your CPU; Windows: the x86_64 zip), verify its SHA-256 against the
+release `SHA256SUMS` before installing anything, and finish by running `ultracompress --version`.
+On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`) with a shim in
+`~/.local/bin` (`ULTRACOMPRESS_BIN_DIR`); no sudo, no shell-profile edits. On Windows it lives in
+`%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
+Needs only curl or wget plus tar (sh) or built-in cmdlets (PowerShell). To update, run the same line
+again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
+(for example `0.5.1`).
+
+### From source
+
+Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and 1.0.4,
 and Node.js 22.19 or newer.
 
 ```sh
