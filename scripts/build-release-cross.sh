@@ -22,6 +22,7 @@ command -v docker >/dev/null 2>&1 || { echo 'build-release-cross: needs Docker (
 # The source goes in as a tar of tracked files from HEAD (works from a linked worktree too).
 git archive --format=tar HEAD | docker run -i --rm --name ultracompress-cross --platform linux/arm64 \
   -v "$OUT":/out -v ultracompress-cargo-registry:/usr/local/cargo/registry \
+  -v ultracompress-cargo-target:/work/target \
   rust:1-bookworm bash -euo pipefail -c '
     mkdir /work
     tar -x -C /work
@@ -50,8 +51,10 @@ git archive --format=tar HEAD | docker run -i --rm --name ultracompress-cross --
     pack /stage-linux-arm64 target/aarch64-unknown-linux-musl/release/ultracompress ultracompress
     pack /stage-linux-x86_64 target/x86_64-unknown-linux-musl/release/ultracompress ultracompress
     pack /stage-windows-x86_64 target/x86_64-pc-windows-gnu/release/ultracompress.exe ultracompress.exe
-    file /stage-linux-arm64/ultracompress | grep -q "statically linked" || { echo "build-release-cross: arm64 Linux binary is not statically linked" >&2; exit 1; }
-    file /stage-linux-x86_64/ultracompress | grep -q "statically linked" || { echo "build-release-cross: x86_64 Linux binary is not statically linked" >&2; exit 1; }
+    file /stage-linux-arm64/ultracompress /stage-linux-x86_64/ultracompress /stage-windows-x86_64/ultracompress.exe
+    # musl targets are fully static; with rust-lld the x86_64 build is a static PIE (no dynamic loader either).
+    file /stage-linux-arm64/ultracompress | grep -Eq "statically linked|static-pie linked" || { echo "build-release-cross: arm64 Linux binary is not statically linked" >&2; exit 1; }
+    file /stage-linux-x86_64/ultracompress | grep -Eq "statically linked|static-pie linked" || { echo "build-release-cross: x86_64 Linux binary is not statically linked" >&2; exit 1; }
     file /stage-windows-x86_64/ultracompress.exe | grep -q "PE32+" || { echo "build-release-cross: Windows binary is not a PE32+ executable" >&2; exit 1; }
     # Deterministic archives: sorted names, fixed owner, epoch timestamps, no gzip timestamp.
     for a in arm64 x86_64; do
