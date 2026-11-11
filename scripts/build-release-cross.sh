@@ -9,7 +9,6 @@
 # It also runs `cargo test` in the same container. Usage: scripts/build-release-cross.sh [out-dir]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-root=$(pwd -P)
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo 'build-release-cross: the working tree has changes; build from a clean checkout' >&2; exit 1; }
 OUT="${1:-dist/release}"
 mkdir -p "$OUT"
@@ -20,12 +19,12 @@ case "$repo" in */*) ;; *) echo "build-release-cross: cannot read owner/repo fro
 command -v docker >/dev/null 2>&1 || { echo 'build-release-cross: needs Docker (https://docs.docker.com/get-docker/)' >&2; exit 1; }
 
 # One native arm64 container builds all three targets; x86_64 code is cross-compiled, never emulated.
-docker run --rm --name ultracompress-cross --platform linux/arm64 \
-  -v "$root":/src:ro -v "$OUT":/out -v ultracompress-cargo-registry:/usr/local/cargo/registry \
+# The source goes in as a tar of tracked files from HEAD (works from a linked worktree too).
+git archive --format=tar HEAD | docker run -i --rm --name ultracompress-cross --platform linux/arm64 \
+  -v "$OUT":/out -v ultracompress-cargo-registry:/usr/local/cargo/registry \
   rust:1-bookworm bash -euo pipefail -c '
-    git config --global --add safe.directory /src
     mkdir /work
-    git -C /src archive HEAD | tar -x -C /work
+    tar -x -C /work
     cd /work
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
