@@ -9,7 +9,8 @@ from test_neutrality import PERSONAL
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / 'scripts' / 'release.sh'
-VARIABLES = ('ULTRACOMPRESS_SIGNING_IDENTITY', 'ULTRACOMPRESS_INSTALLER_IDENTITY', 'NOTARY_PROFILE', 'ULTRACOMPRESS_PKG_IDENTIFIER')
+# release.sh 0.5.1 dropped the installer signing identity and package identifier; only these two remain required.
+VARIABLES = ('ULTRACOMPRESS_SIGNING_IDENTITY', 'NOTARY_PROFILE')
 
 
 class ReleaseScriptTest(unittest.TestCase):
