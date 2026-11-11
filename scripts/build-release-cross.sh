@@ -24,7 +24,7 @@ git archive --format=tar HEAD | docker run -i --rm --name ultracompress-cross --
   -v "$OUT":/out -v ultracompress-cargo-registry:/usr/local/cargo/registry \
   -v ultracompress-cargo-target:/work/target \
   rust:1-bookworm bash -euo pipefail -c '
-    mkdir /work
+    mkdir -p /work
     tar -x -C /work
     cd /work
     export DEBIAN_FRONTEND=noninteractive
