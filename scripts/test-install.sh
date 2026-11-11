@@ -20,7 +20,10 @@ command -v python3 >/dev/null 2>&1 || die 'needs python3 to serve the local rele
 command -v docker >/dev/null 2>&1 || die 'needs Docker for the Linux and PowerShell tests'
 if nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then die "port $PORT is already in use; set ULTRACOMPRESS_TEST_PORT"; fi
 
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/ultracompress-test.XXXXXX")
+# Keep the workspace under the repo (dist/ is gitignored): Docker Desktop only shares some host
+# paths with containers, and the default macOS TMPDIR (/var/folders/...) is not one of them.
+mkdir -p "$root/dist"
+WORK=$(mktemp -d "$root/dist/install-test.XXXXXX")
 BASE="$WORK/base"
 mkdir -p "$BASE"
 SRV=""
@@ -114,41 +117,61 @@ docker run --rm --name ultracompress-test-linux -v "$BASE":/rel ubuntu:24.04 bas
 cp "$REL/ultracompress-linux-arm64.tar.gz" "$BASE/ultracompress-linux-arm64.tar.gz"
 
 say '== PowerShell 7 (Linux container): install, version, upgrade =='
-docker run --rm --name ultracompress-test-pwsh -v "$BASE":/rel:ro mcr.microsoft.com/powershell \
-  pwsh -NoProfile -Command "
-    \$ErrorActionPreference = 'Stop'
-    \$env:ULTRACOMPRESS_RELEASE_BASE = '$DOCKER_BASE'
-    \$env:HOME = '/tmp/h1'
-    & /rel/install.ps1
-    & /tmp/h1/.ultracompress/bin/ultracompress --version
-    if (\$LASTEXITCODE -ne 0) { exit 1 }
-    & /rel/install.ps1
-    Write-Host 'pwsh install and upgrade OK'
-    try {
-      Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
-      \$r = Invoke-ScriptAnalyzer -Path /rel/install.ps1
-      if (\$r) { \$r | Format-Table -AutoSize | Out-String | Write-Host }
-      \$errors = @(\$r | Where-Object Severity -eq 'Error')
-      if (\$errors.Count -gt 0) { exit 1 }
-      Write-Host 'PSScriptAnalyzer: no errors'
-    } catch { Write-Host \"PSScriptAnalyzer skipped: \$_\" }
-  "
+# mcr.microsoft.com/powershell publishes no arm64 Linux image (only amd64 and 32-bit arm), so run
+# the official Microsoft arm64 PowerShell 7 tarball inside ubuntu:24.04 instead.
+PS_VERSION=7.4.6
+PS_TGZ="$root/dist/powershell-$PS_VERSION-linux-arm64.tar.gz"
+if [ ! -f "$PS_TGZ" ]; then
+  curl -fsSL --retry 3 -o "$PS_TGZ" "https://github.com/PowerShell/PowerShell/releases/download/v$PS_VERSION/powershell-$PS_VERSION-linux-arm64.tar.gz" \
+    || die "cannot download PowerShell $PS_VERSION (linux-arm64) from GitHub"
+fi
+cat > "$WORK/ps-normal.ps1" <<'PS1'
+$ErrorActionPreference = 'Stop'
+& /rel/install.ps1
+& /tmp/h1/.ultracompress/bin/ultracompress --version
+if ($LASTEXITCODE -ne 0) { exit 1 }
+& /rel/install.ps1
+Write-Host 'pwsh install and upgrade OK'
+try {
+  Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop
+  $r = Invoke-ScriptAnalyzer -Path /rel/install.ps1
+  if ($r) { $r | Format-Table -AutoSize | Out-String | Write-Host }
+  $errors = @($r | Where-Object Severity -eq 'Error')
+  if ($errors.Count -gt 0) { exit 1 }
+  Write-Host 'PSScriptAnalyzer: no errors'
+} catch { Write-Host "PSScriptAnalyzer skipped: $_" }
+PS1
+cat > "$WORK/ps-corrupt.ps1" <<'PS1'
+try { & /rel/install.ps1 } catch {
+  Write-Host $_.Exception.Message
+  if ($_.Exception.Message -like '*checksum mismatch*') { exit 0 }
+  exit 1
+}
+exit 1
+PS1
+pwsh_setup='
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq && apt-get install -y -qq ca-certificates libicu74 >/dev/null
+  mkdir -p /opt/powershell
+  tar -xzf /tmp/ps.tar.gz -C /opt/powershell
+  chmod +x /opt/powershell/pwsh
+'
+docker run --rm --name ultracompress-test-pwsh -e ULTRACOMPRESS_RELEASE_BASE="$DOCKER_BASE" -e HOME=/tmp/h1 \
+  -v "$BASE":/rel:ro -v "$WORK":/tests:ro -v "$PS_TGZ":/tmp/ps.tar.gz:ro ubuntu:24.04 \
+  bash -euo pipefail -c "$pwsh_setup /opt/powershell/pwsh -NoProfile -File /tests/ps-normal.ps1"
 
 say '== PowerShell 7 (Linux container): corrupted archive refused =='
-printf 'corruption' >> "$BASE/ultracompress-windows-x86_64.zip"
-if docker run --rm --name ultracompress-test-pwsh-bad -v "$BASE":/rel:ro mcr.microsoft.com/powershell \
-  pwsh -NoProfile -Command "
-    \$env:ULTRACOMPRESS_RELEASE_BASE = '$DOCKER_BASE'
-    \$env:HOME = '/tmp/h2'
-    try { & /rel/install.ps1 } catch { Write-Host \$_.Exception.Message; if (\$_.Exception.Message -like '*checksum mismatch*') { exit 0 } ; exit 1 }
-    exit 1
-  "; then
+# Under Linux pwsh the installer fetches the Linux tarball, so corrupt that asset.
+printf 'corruption' >> "$BASE/ultracompress-linux-arm64.tar.gz"
+if docker run --rm --name ultracompress-test-pwsh-bad -e ULTRACOMPRESS_RELEASE_BASE="$DOCKER_BASE" -e HOME=/tmp/h2 \
+  -v "$BASE":/rel:ro -v "$WORK":/tests:ro -v "$PS_TGZ":/tmp/ps.tar.gz:ro ubuntu:24.04 \
+  bash -euo pipefail -c "$pwsh_setup /opt/powershell/pwsh -NoProfile -File /tests/ps-corrupt.ps1"; then
   say 'pwsh corrupted archive refused'
 else
-  cp "$REL/ultracompress-windows-x86_64.zip" "$BASE/ultracompress-windows-x86_64.zip"
+  cp "$REL/ultracompress-linux-arm64.tar.gz" "$BASE/ultracompress-linux-arm64.tar.gz"
   die 'pwsh did not refuse the corrupted archive with a checksum error'
 fi
-cp "$REL/ultracompress-windows-x86_64.zip" "$BASE/ultracompress-windows-x86_64.zip"
+cp "$REL/ultracompress-linux-arm64.tar.gz" "$BASE/ultracompress-linux-arm64.tar.gz"
 
 kill "$SRV" 2>/dev/null || true
 wait "$SRV" 2>/dev/null || true
