@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-11) — One-line installers, Linux and Windows binaries
 
 - One-line installers for macOS, Linux and Windows: `scripts/install.sh` and `scripts/install.ps1`,
   attached to each release. They verify the download's SHA-256 before installing, put `ultracompress`
