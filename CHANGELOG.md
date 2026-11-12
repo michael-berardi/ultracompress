@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 (2026-11-11) — Installers that run
+
+- The `install.sh` and `install.ps1` attached to 0.6.0 refused to run with "this is a source template". The release
+  build writes the repository address into the installers, and it also rewrote the check that detects an unstamped
+  copy, so the check always fired. The check now looks for the shape of the unreplaced placeholder, the build fails
+  if stamping touches it, and the installer test runs a release copy without an address override.
+
 ## 0.6.0 (2026-11-11) — One-line installers, Linux and Windows binaries
 
 - One-line installers for macOS, Linux and Windows: `scripts/install.sh` and `scripts/install.ps1`,

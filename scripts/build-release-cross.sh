@@ -71,6 +71,11 @@ chmod 644 "$OUT/install.sh" "$OUT/install.ps1"
 if grep -q '@RELEASE_REPO@' "$OUT/install.sh" "$OUT/install.ps1"; then
   echo 'build-release-cross: the release installers still contain the @RELEASE_REPO@ token' >&2; exit 1
 fi
+# 0.6.0 shipped installers whose own "source template" guard had been stamped too, so they refused to run.
+# A stamped copy must name the repository exactly once as an address and never inside that guard.
+if grep -n 'source template' "$OUT/install.sh" "$OUT/install.ps1" | grep -q "$repo"; then
+  echo 'build-release-cross: stamping rewrote the source-template guard; the release installers would refuse to run' >&2; exit 1
+fi
 # Refresh checksums over every asset present (including any macOS assets), except SHA256SUMS itself.
 ( cd "$OUT" && files=$(find . -maxdepth 1 -type f ! -name SHA256SUMS | LC_ALL=C sort | sed 's|^\./||')
   printf '%s\n' "$files" | while read -r f; do

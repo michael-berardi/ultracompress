@@ -32,7 +32,8 @@ elif command -v shasum >/dev/null 2>&1; then sha256() { shasum -a 256 "$1" | cut
 else die "needs sha256sum or shasum to verify the download; install coreutils (Debian/Ubuntu: apt-get install coreutils) or perl (macOS ships shasum)"; fi
 
 main() {
-case "$BASE" in *@RELEASE_REPO@*) die "this install.sh is a source template, not a release asset; use the install.sh attached to a GitHub release, or set ULTRACOMPRESS_RELEASE_BASE to a release download base" ;; esac
+# The guard matches the shape of the unreplaced token, never the token itself, so stamping cannot rewrite it.
+case "$BASE" in *github.com/@*@/*) die "this install.sh is a source template, not a release asset; use the install.sh attached to a GitHub release, or set ULTRACOMPRESS_RELEASE_BASE to a release download base" ;; esac
 case "$(uname -s)" in
   Darwin) ASSET="UltraCompress-macos-universal.zip" ;;
   Linux)

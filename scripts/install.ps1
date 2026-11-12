@@ -15,7 +15,8 @@ $IsWin = if (Test-Path Variable:IsWindows) { $IsWindows } else { $true }
 if ($env:ULTRACOMPRESS_RELEASE_BASE) { $Base = $env:ULTRACOMPRESS_RELEASE_BASE }
 elseif ($env:ULTRACOMPRESS_VERSION) { $Base = "https://github.com/$Repo/releases/download/v$($env:ULTRACOMPRESS_VERSION.TrimStart('v'))" }
 else { $Base = "https://github.com/$Repo/releases/latest/download" }
-if ($Base -like '*@RELEASE_REPO@*') {
+# The guard matches the shape of the unreplaced token, never the token itself, so stamping cannot rewrite it.
+if ($Base -like '*github.com/@*@/*') {
   throw 'ultracompress install: this install.ps1 is a source template, not a release asset; use the install.ps1 attached to a GitHub release, or set ULTRACOMPRESS_RELEASE_BASE to a release download base.'
 }
 if ($env:ULTRACOMPRESS_HOME) { $HomeDir = $env:ULTRACOMPRESS_HOME }

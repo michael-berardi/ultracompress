@@ -77,6 +77,15 @@ if [ "$(uname -s)" = Darwin ]; then
   HOME="$H1" ULTRACOMPRESS_RELEASE_BASE="$LOCAL_BASE" sh "$BASE/install.sh"
   say "macOS install and upgrade OK ($v)"
 
+  say '== release copy without an override reaches the release address, not the template guard =='
+  H0="$WORK/home0"; mkdir -p "$H0"
+  # A version that does not exist: the stamped installer must get as far as the download and fail there by name.
+  if err=$(HOME="$H0" ULTRACOMPRESS_VERSION=0.0.0-none sh "$BASE/install.sh" 2>&1); then die 'an install of a version that does not exist succeeded'; fi
+  case "$err" in *'source template'*) die "the release install.sh refuses as a source template: $err" ;; esac
+  case "$err" in *'download failed'*) ;; *) die "expected a named download failure, got: $err" ;; esac
+  [ ! -e "$H0/.ultracompress" ] || die 'a failed install left files behind'
+  say 'release copy passes its template guard and fails at the download by name'
+
   say '== macOS: corrupted archive refused =='
   cp "$BASE/UltraCompress-macos-universal.zip" "$WORK/mac.zip.bak"
   printf 'corruption' >> "$BASE/UltraCompress-macos-universal.zip"
