@@ -52,6 +52,12 @@ class StaticPs1Test(unittest.TestCase):
         self.assertIn('OEMCodePage', self.text)
         self.assertIn("'%~dp0..\\'", self.text)
 
+    def test_user_path_is_written_through_the_registry(self):
+        text = PS1.read_text()
+        self.assertNotIn("SetEnvironmentVariable('Path'", text)
+        self.assertNotIn("GetEnvironmentVariable('Path'", text)
+        self.assertIn('DoNotExpandEnvironmentNames', text)
+
     def test_template_guard_keeps_its_shape(self):
         self.assertIn("-like '*github.com/@*@/*'", self.text)
         self.assertEqual(self.text.count('@RELEASE_REPO@'), 2)  # the comment and the one assignment
@@ -178,7 +184,9 @@ class Pwsh7Test(unittest.TestCase):
         (ROOT / 'dist').mkdir(exist_ok=True)
         d = Path(tempfile.mkdtemp(prefix='ps-unit-', dir=ROOT / 'dist'))
         self.addCleanup(shutil.rmtree, d, True)
-        (d / 'helpers.ps1').write_text(m.group(1))
+        pm = re.search(r'#region path-helpers\n(.*?)#endregion', text, re.S)
+        self.assertIsNotNone(pm)
+        (d / 'helpers.ps1').write_text(m.group(1) + pm.group(1))
         (d / 'install.ps1').write_text(text)
         (d / 'test.ps1').write_text(r'''
 $ErrorActionPreference = 'Stop'
@@ -216,6 +224,13 @@ Check 'unrepresentable path throws instead of writing ?' ($thrown -and -not (Tes
 $latin = [Text.Encoding]::GetEncoding('iso-8859-1')
 Write-ShimFile "$w/h.cmd" "@echo off`r`n`"C:\Users\Jos$([char]0xE9)\x.exe`" %*" $latin
 Check 'representable path round-trips' ((Get-Content "$w/h.cmd" -Encoding ([Text.Encoding]::Latin1.WebName -as [string])) -ne $null -and ([IO.File]::ReadAllBytes("$w/h.cmd") -contains 0xE9))
+
+$env:UCTEST_HOME = '/x/home'
+Check 'literal entry present' (Test-PathHasEntry 'C:\a;D:\UC\bin' 'D:\UC\bin')
+Check 'case and trailing backslash ignored' (Test-PathHasEntry 'C:\a;d:\uc\BIN\\' 'D:\UC\bin')
+Check 'expanded entry present' (Test-PathHasEntry 'C:\a;%UCTEST_HOME%\bin' '/x/home\bin')
+Check 'absent entry' (-not (Test-PathHasEntry 'C:\a;%UCTEST_HOME%\other;' 'D:\UC\bin'))
+Check 'empty path' (-not (Test-PathHasEntry '' 'D:\UC\bin'))
 
 $p = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('rel/../x//y')
 Check 'relative path normalised to absolute' ([IO.Path]::IsPathRooted($p))

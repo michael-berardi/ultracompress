@@ -1,5 +1,13 @@
 # Changelog
 
+
+## 0.6.4 (2026-11-12) — Windows Path fix
+
+- The Windows installer read the user Path with its `%VAR%` entries already expanded and wrote it back as a plain string,
+  so a stock entry such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` was permanently hard-coded and the value
+  lost its expandable type. It now edits the registry value without expanding it, keeps its existing type, and treats the
+  bin folder as present when an entry matches it literally or after expansion. This is fixed.
+- The Windows installer was tested under PowerShell 7 on Linux, not yet on a Windows machine.
 ## 0.6.3 (2026-11-12) — README links
 
 - README: real owner in install, badge and clone links; neutrality test allows the repo's own URL.

@@ -77,6 +77,19 @@ function Install-UltraCompress {
     [IO.File]::WriteAllText($Path, $Text, $Encoding)
   }
   #endregion
+  #region path-helpers
+  # True when $Entries (the raw, unexpanded user Path) already holds $Dir, literally or after expanding %VARS%,
+  # ignoring case and a trailing backslash.
+  function Test-PathHasEntry([string]$Entries, [string]$Dir) {
+    $want = $Dir.TrimEnd('\')
+    foreach ($e in ($Entries -split ';')) {
+      if (-not $e) { continue }
+      if ($e.TrimEnd('\') -ieq $want) { return $true }
+      if ([Environment]::ExpandEnvironmentVariables($e).TrimEnd('\') -ieq $want) { return $true }
+    }
+    return $false
+  }
+  #endregion
 
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ultracompress-install-' + [guid]::NewGuid())
   New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -128,13 +141,21 @@ function Install-UltraCompress {
       if ($IsWin) {
         $shimText = Get-CmdShimText $installed $HomeDir $BinDir
         Write-ShimFile $shim $shimText.Text $shimText.Encoding
-        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-        if (-not $userPath) { $userPath = '' }
-        if (($userPath -split ';') -notcontains $BinDir) {
-          $newPath = if ($userPath) { "$userPath;$BinDir" } else { $BinDir }
-          [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-          Write-Host "Added $BinDir to your USER Path; open a new terminal to pick it up."
-        }
+        # Edit the registry value directly: the .NET Get/SetEnvironmentVariable pair expands %VARS% and stores REG_SZ.
+        $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        try {
+          $userPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+          if (-not (Test-PathHasEntry $userPath $BinDir)) {
+            $newPath = if ($userPath) { $userPath.TrimEnd(';') + ';' + $BinDir } else { $BinDir }
+            $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+            if ($null -ne $envKey.GetValue('Path', $null)) { $kind = $envKey.GetValueKind('Path') }
+            $envKey.SetValue('Path', $newPath, $kind)
+            # Setting and clearing a user variable broadcasts the change so new terminals pick the Path up.
+            [Environment]::SetEnvironmentVariable('ULTRACOMPRESS_PATH_REFRESH', '1', 'User')
+            [Environment]::SetEnvironmentVariable('ULTRACOMPRESS_PATH_REFRESH', $null, 'User')
+            Write-Host "Added $BinDir to your USER Path; open a new terminal to pick it up."
+          }
+        } finally { if ($envKey) { $envKey.Close() } }
       } else {
         Write-ShimFile $shim "#!/bin/sh`n# $ShimMarker`nexec `"$installed`" `"`$@`"`n" (New-Object Text.UTF8Encoding($false))
         & chmod 755 $shim
