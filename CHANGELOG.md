@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.2 (2026-11-11) — Installer fixes
+
+- The Windows installer wrote its `.cmd` shim with an absolute path in ASCII. With `ULTRACOMPRESS_BIN_DIR` outside the
+  install folder the shim pointed at nothing and the installer failed after installing the program; a non-ASCII profile
+  name turned into `?`. The shim now uses a relative path when it sits in the install folder and otherwise the absolute
+  path in the console code page, and the installer refuses a path that code page cannot hold instead of writing `?`.
+- Both installers now write a marker line in the shim and never overwrite an `ultracompress` they did not write; they say
+  so in one line and leave it alone. A shim from 0.6.1 still counts as theirs.
+- `install.ps1` runs inside a function and leaves no preferences or variables in your session, hides the slow download
+  progress bar, resolves relative and `/`-style folder overrides, and runs native commands so that a stderr line cannot
+  abort the install on Windows PowerShell 5.1.
+- `scripts/build-release-cross.sh` reads `ssh://git@github.com/...` remotes and requires a plain `owner/repo` name.
+- The Windows installer was tested under PowerShell 7 on Linux, not yet on a Windows machine.
+
 ## 0.6.1 (2026-11-11) — Installers that run
 
 - The `install.sh` and `install.ps1` attached to 0.6.0 refused to run with "this is a source template". The release

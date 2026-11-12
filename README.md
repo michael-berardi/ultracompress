@@ -45,6 +45,7 @@ require another context-management agent.
 
 ## What's new
 
+- **0.6.2**: installer fixes for Windows and for a custom bin folder; an existing `ultracompress` the installer did not write is never overwritten.
 - **0.6.1**: the published installers run (the 0.6.0 copies refused to start).
 - **0.6.0**: one-line installers for macOS, Linux and Windows, and published Linux (x86_64, arm64) and Windows (x86_64) binaries.
 - **0.5.1**: one universal (arm64 + x86_64) notarized macOS CLI zip replaces the arm64 zip and pkg.
@@ -61,7 +62,7 @@ require another context-management agent.
 
 ## Install
 
-Current release: **0.6.1**. One line installs the `ultracompress` CLI on macOS, Linux or Windows.
+Current release: **0.6.2**. One line installs the `ultracompress` CLI on macOS, Linux or Windows.
 
 macOS and Linux:
 
@@ -83,7 +84,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs only curl or wget plus tar (sh) or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.1`).
+(for example `0.6.2`).
 
 ### From source
 
@@ -91,7 +92,7 @@ Building from source requires Rust 1.85 or newer. The Pi adapter is tested with 
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.6.1 https://github.com/your-github-username/ultracompress
+git clone --branch v0.6.2 https://github.com/your-github-username/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin

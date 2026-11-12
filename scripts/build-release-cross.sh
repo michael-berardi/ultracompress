@@ -14,8 +14,8 @@ OUT="${1:-dist/release}"
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd -P)
 remote=$(git remote get-url origin)
-repo=$(printf '%s\n' "$remote" | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
-case "$repo" in */*) ;; *) echo "build-release-cross: cannot read owner/repo from origin remote '$remote'" >&2; exit 1 ;; esac
+. scripts/repo-slug.sh
+repo=$(repo_slug "$remote") || { echo "build-release-cross: cannot read a GitHub owner/repo from origin remote '$remote'" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo 'build-release-cross: needs Docker (https://docs.docker.com/get-docker/)' >&2; exit 1; }
 
 # One native arm64 container builds all three targets; x86_64 code is cross-compiled, never emulated.

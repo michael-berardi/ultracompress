@@ -31,6 +31,17 @@ if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum "$1" | cut -d
 elif command -v shasum >/dev/null 2>&1; then sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
 else die "needs sha256sum or shasum to verify the download; install coreutils (Debian/Ubuntu: apt-get install coreutils) or perl (macOS ships shasum)"; fi
 
+SHIM_MARKER="ultracompress-installer-shim"
+# own_shim <file>: true when this installer wrote the file (marker line) or 0.6.1 did (its exact two-line shape).
+own_shim() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  grep -q "^# $SHIM_MARKER\$" "$1" 2>/dev/null && return 0
+  [ "$(grep -c . "$1" 2>/dev/null)" = 2 ] || return 1
+  [ "$(sed -n 1p "$1")" = '#!/bin/sh' ] || return 1
+  case "$(sed -n 2p "$1")" in 'exec "'*'/ultracompress" "$@"') return 0 ;; esac
+  return 1
+}
+
 main() {
 # The guard matches the shape of the unreplaced token, never the token itself, so stamping cannot rewrite it.
 case "$BASE" in *github.com/@*@/*) die "this install.sh is a source template, not a release asset; use the install.sh attached to a GitHub release, or set ULTRACOMPRESS_RELEASE_BASE to a release download base" ;; esac
@@ -80,16 +91,28 @@ mv -f "$HOME_DIR/.ultracompress.new.$$" "$HOME_DIR/ultracompress"
 for f in LICENSE README.md; do
   [ -f "$SRC/$f" ] && cp "$SRC/$f" "$HOME_DIR/$f"
 done
-cat > "$BIN_DIR/.ultracompress.shim.$$" <<SHIM
+CMD="$BIN_DIR/ultracompress"
+if [ -e "$CMD" ] || [ -L "$CMD" ]; then
+  if own_shim "$CMD"; then WRITE_SHIM=1; else WRITE_SHIM=0; fi
+else WRITE_SHIM=1; fi
+if [ "$WRITE_SHIM" = 1 ]; then
+  cat > "$BIN_DIR/.ultracompress.shim.$$" <<SHIM
 #!/bin/sh
+# $SHIM_MARKER
 exec "$HOME_DIR/ultracompress" "\$@"
 SHIM
-chmod 755 "$BIN_DIR/.ultracompress.shim.$$"
-mv -f "$BIN_DIR/.ultracompress.shim.$$" "$BIN_DIR/ultracompress"
+  chmod 755 "$BIN_DIR/.ultracompress.shim.$$"
+  mv -f "$BIN_DIR/.ultracompress.shim.$$" "$CMD"
+else
+  say "Left $CMD alone: it was not written by this installer. Run $HOME_DIR/ultracompress, or remove that file and re-run."
+  CMD="$HOME_DIR/ultracompress"
+fi
 
-got=$("$BIN_DIR/ultracompress" --version 2>&1) || die "the installed command does not run: $got"
-say "UltraCompress $VERSION installed ($BIN_DIR/ultracompress)."
-case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to your PATH:  export PATH=\"$BIN_DIR:\$PATH\"" ;; esac
+got=$("$CMD" --version 2>&1) || die "the installed command does not run: $got"
+say "UltraCompress $VERSION installed ($CMD)."
+if [ "$WRITE_SHIM" = 1 ]; then
+  case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to your PATH:  export PATH=\"$BIN_DIR:\$PATH\"" ;; esac
+fi
 say "Next: ultracompress plan --session /path/to/session.jsonl"
 }
 
