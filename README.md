@@ -9,7 +9,7 @@ still searchable. $0 per compaction.**
 
 *The compaction layer for people who read their agent's bills.*
 
-[![Latest release](https://img.shields.io/github/v/release/your-github-username/ultracompress?label=release)](https://github.com/your-github-username/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/your-github-username/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
+[![Latest release](https://img.shields.io/github/v/release/michael-berardi/ultracompress?label=release)](https://github.com/michael-berardi/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/michael-berardi/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
 
 [Install](#install) · [Claude Code](#claude-code) · [Carl](#carl) · [Hermes Agent](#hermes-agent) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
 
@@ -19,10 +19,10 @@ still searchable. $0 per compaction.**
 
 ## Download
 
-- **macOS, Apple silicon and Intel:** [UltraCompress-macos-universal.zip](https://github.com/your-github-username/ultracompress/releases/latest/download/UltraCompress-macos-universal.zip). Unzip it and copy `ultracompress` into your `PATH`. The binary is Developer ID-signed and notarized.
-- **Linux, x86_64 and arm64:** [ultracompress-linux-x86_64.tar.gz](https://github.com/your-github-username/ultracompress/releases/latest/download/ultracompress-linux-x86_64.tar.gz) and [ultracompress-linux-arm64.tar.gz](https://github.com/your-github-username/ultracompress/releases/latest/download/ultracompress-linux-arm64.tar.gz). Statically linked (musl); they run on any distribution, glibc or musl.
-- **Windows, x86_64:** [ultracompress-windows-x86_64.zip](https://github.com/your-github-username/ultracompress/releases/latest/download/ultracompress-windows-x86_64.zip). Unzip it and put `ultracompress.exe` in a folder on your `PATH`.
-- All releases, checksums (`SHA256SUMS`) and provenance: [latest release](https://github.com/your-github-username/ultracompress/releases/latest).
+- **macOS, Apple silicon and Intel:** [UltraCompress-macos-universal.zip](https://github.com/michael-berardi/ultracompress/releases/latest/download/UltraCompress-macos-universal.zip). Unzip it and copy `ultracompress` into your `PATH`. The binary is Developer ID-signed and notarized.
+- **Linux, x86_64 and arm64:** [ultracompress-linux-x86_64.tar.gz](https://github.com/michael-berardi/ultracompress/releases/latest/download/ultracompress-linux-x86_64.tar.gz) and [ultracompress-linux-arm64.tar.gz](https://github.com/michael-berardi/ultracompress/releases/latest/download/ultracompress-linux-arm64.tar.gz). Statically linked (musl); they run on any distribution, glibc or musl.
+- **Windows, x86_64:** [ultracompress-windows-x86_64.zip](https://github.com/michael-berardi/ultracompress/releases/latest/download/ultracompress-windows-x86_64.zip). Unzip it and put `ultracompress.exe` in a folder on your `PATH`.
+- All releases, checksums (`SHA256SUMS`) and provenance: [latest release](https://github.com/michael-berardi/ultracompress/releases/latest).
 - The one-line installers below do the download, checksum and `PATH` setup for you.
 
 UltraCompress is content-aware context compaction for LLM coding agents. It
@@ -45,6 +45,7 @@ require another context-management agent.
 
 ## What's new
 
+- **0.6.3**: README links use the real GitHub owner (install, badge, download and clone).
 - **0.6.2**: installer fixes for Windows and for a custom bin folder; an existing `ultracompress` the installer did not write is never overwritten.
 - **0.6.1**: the published installers run (the 0.6.0 copies refused to start).
 - **0.6.0**: one-line installers for macOS, Linux and Windows, and published Linux (x86_64, arm64) and Windows (x86_64) binaries.
@@ -62,18 +63,18 @@ require another context-management agent.
 
 ## Install
 
-Current release: **0.6.2**. One line installs the `ultracompress` CLI on macOS, Linux or Windows.
+Current release: **0.6.3**. One line installs the `ultracompress` CLI on macOS, Linux or Windows.
 
 macOS and Linux:
 
 ```sh
-curl -fsSL https://github.com/your-github-username/ultracompress/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/michael-berardi/ultracompress/releases/latest/download/install.sh | sh
 ```
 
 Windows (PowerShell 5.1 or 7):
 
 ```powershell
-irm https://github.com/your-github-username/ultracompress/releases/latest/download/install.ps1 | iex
+irm https://github.com/michael-berardi/ultracompress/releases/latest/download/install.ps1 | iex
 ```
 
 What the installers do: they download the release for your platform (macOS: the signed universal zip;
@@ -84,7 +85,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs only curl or wget plus tar (sh) or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.2`).
+(for example `0.6.3`).
 
 ### From source
 
@@ -92,7 +93,7 @@ Building from source requires Rust 1.85 or newer. The Pi adapter is tested with 
 and Node.js 22.19 or newer.
 
 ```sh
-git clone --branch v0.6.2 https://github.com/your-github-username/ultracompress
+git clone --branch v0.6.3 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release
 mkdir -p ~/.local/bin
@@ -134,7 +135,7 @@ Full install, the binary lookup order, and uninstall:
 
 ## Carl
 
-[Carl](https://github.com/your-github-username/carl), the agent bot gateway, ships
+Carl, the agent bot gateway, ships
 this repository's Pi adapter in `vendor/ultracompress` and turns it on by
 itself when it finds the `ultracompress` binary (`ULTRACOMPRESS_BIN`, then
 `~/.ultraterm/bin`, `~/.local/bin`, `~/.cargo/bin` and `PATH`). There is

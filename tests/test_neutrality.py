@@ -73,6 +73,12 @@ def _files():
     return out
 
 
+# The repository's own canonical URL is the one allowed use of the owner name, in docs only.
+OWN_URL = re.compile(
+    r"(?:github\.com|img\.shields\.io/github/(?:[\w.-]+/)*?[\w.-]+?)/michael-berardi/ultracompress(?![\w.-])")
+DOC_SUFFIXES = (".md",)
+
+
 def _hits(pattern):
     hits = []
     for p in _files():
@@ -82,6 +88,8 @@ def _hits(pattern):
         except OSError:
             continue
         for i, line in enumerate(lines, 1):
+            if p.endswith(DOC_SUFFIXES):
+                line = OWN_URL.sub("", line)
             if pattern.search(line):
                 hits.append((os.path.relpath(p, ROOT), i, line.strip()[:140]))
     return hits
@@ -114,6 +122,21 @@ class NeutralityTest(unittest.TestCase):
         if private is not None:
             hits.extend(_hits(private))
         self.assertEqual(hits, [], "Personal/project names found in shipped files:\n" + "\n".join(f"{f}:{l}: {t}" for f, l, t in hits))
+
+    def test_own_url_allowed_only_in_that_exact_form(self):
+        ok = "https://github.com/michael-berardi/ultracompress/releases/latest"
+        self.assertIsNone(PERSONAL.search(OWN_URL.sub("", ok)))
+        for bad in ("https://github.com/michael-berardi/other", "michael-berardi",
+                    "https://github.com/michael-berardi/ultracompress-x"):
+            self.assertIsNotNone(PERSONAL.search(OWN_URL.sub("", bad)), bad)
+
+    def test_readme_has_no_placeholder_owner_in_urls(self):
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as handle:
+            text = handle.read()
+        url = re.compile(r"https?://[^\s)\]>\"']+")
+        bad = [u for u in url.findall(text)
+               if re.search(r"example-user|your-org|your-github-username|Alex/|OWNER|<owner>", u)]
+        self.assertEqual(bad, [])
 
     def test_scans_the_shipped_tree_not_an_empty_set(self):
         files = _files()

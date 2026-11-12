@@ -35,7 +35,7 @@ You need Hermes Agent (tested with 0.21.5) and the `ultracompress` binary (see t
 [main README](../README.md#install)).
 
 ```sh
-git clone https://github.com/your-github-username/ultracompress
+git clone https://github.com/michael-berardi/ultracompress
 ln -s "$PWD/ultracompress/hermes/ultracompress" ~/.hermes/plugins/ultracompress
 hermes config set context.engine ultracompress
 hermes tools enable context_engine --platform cli        # the recall tool; repeat per platform

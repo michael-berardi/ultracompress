@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.3 (2026-11-12) — README links
+
+- README: real owner in install, badge and clone links; neutrality test allows the repo's own URL.
+
 ## 0.6.2 (2026-11-11) — Installer fixes
 
 - The Windows installer wrote its `.cmd` shim with an absolute path in ASCII. With `ULTRACOMPRESS_BIN_DIR` outside the
