@@ -1,5 +1,7 @@
 # UltraCompress
 
+[![Latest release](https://img.shields.io/github/v/release/michael-berardi/ultracompress?label=release)](https://github.com/michael-berardi/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/michael-berardi/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
+
 UltraCompress compacts coding-agent conversations into deterministic briefs
 without a model call. A Rust CLI builds the brief; adapters connect it to Pi,
 Claude Code and Hermes Agent. Recall searches the original session on disk,
@@ -7,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.6.4**. Install a prebuilt binary:
+Current CLI release: **0.6.5**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -29,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.4`).
+(for example `0.6.5`).
 
 ### From source
 
@@ -213,3 +215,5 @@ checkout alone and are not product-wide performance guarantees.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
 [MIT License](LICENSE). Keep raw sessions and credentials out of public issues.
+
+Part of [Pareto Cybernetics](https://paretocybernetics.com/projects/ultracompress/): free, private, open-source tools for working with AI agents.

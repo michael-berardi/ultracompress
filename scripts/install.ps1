@@ -1,5 +1,5 @@
 # UltraCompress installer for Windows (PowerShell 5.1 and 7):
-#   irm https://github.com/your-github-username/ultracompress/releases/latest/download/install.ps1 | iex
+#   irm https://github.com/michael-berardi/ultracompress/releases/latest/download/install.ps1 | iex
 # Downloads the release zip for this machine, checks its SHA-256 before anything is installed, puts
 # ultracompress.exe under %LOCALAPPDATA%\UltraCompress and a .cmd shim in its bin folder, and adds that
 # bin folder to your USER Path when it is not there. No admin rights, re-running upgrades in place.

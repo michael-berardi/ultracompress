@@ -25,6 +25,8 @@ tests and benchmark evidence. Never commit real session logs or credentials.
 
 ## Releasing
 
+Adapters carry their own version and change version only when the adapter changes.
+
 On macOS arm64, use a clean checkout whose HEAD is the `v<workspace version>`
 tag. Install the signing certificates and configure a notarytool keychain profile.
 Set `ULTRACOMPRESS_SIGNING_IDENTITY` to the Developer ID Application identity

@@ -73,10 +73,9 @@ def _files():
     return out
 
 
-# The repository's own canonical URL is the one allowed use of the owner name, in docs only.
+# The repository's own canonical URL is the one allowed use of the owner name, in shipped files.
 OWN_URL = re.compile(
-    r"(?:github\.com|img\.shields\.io/github/(?:[\w.-]+/)*?[\w.-]+?)/michael-berardi/ultracompress(?![\w.-])")
-DOC_SUFFIXES = (".md",)
+    r"(?:github\.com|img\.shields\.io/github/(?:[\w.-]+/)*?[\w.-]+?)/michael-berardi/ultracompress(?:\.git)?(?![\w.-])")
 
 
 def _hits(pattern):
@@ -88,8 +87,7 @@ def _hits(pattern):
         except OSError:
             continue
         for i, line in enumerate(lines, 1):
-            if p.endswith(DOC_SUFFIXES):
-                line = OWN_URL.sub("", line)
+            line = OWN_URL.sub("", line)
             if pattern.search(line):
                 hits.append((os.path.relpath(p, ROOT), i, line.strip()[:140]))
     return hits
@@ -126,6 +124,7 @@ class NeutralityTest(unittest.TestCase):
     def test_own_url_allowed_only_in_that_exact_form(self):
         ok = "https://github.com/michael-berardi/ultracompress/releases/latest"
         self.assertIsNone(PERSONAL.search(OWN_URL.sub("", ok)))
+        self.assertIsNone(PERSONAL.search(OWN_URL.sub("", ok.replace("/releases/latest", ".git"))))
         for bad in ("https://github.com/michael-berardi/other", "michael-berardi",
                     "https://github.com/michael-berardi/ultracompress-x"):
             self.assertIsNotNone(PERSONAL.search(OWN_URL.sub("", bad)), bad)

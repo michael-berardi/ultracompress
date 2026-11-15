@@ -5,9 +5,9 @@
   "license": "MIT",
   "type": "module",
   "main": "index.ts",
-  "homepage": "https://github.com/example/ultracompress#readme",
+  "homepage": "https://github.com/michael-berardi/ultracompress#readme",
   "bugs": {
-    "url": "https://github.com/example/ultracompress/issues"
+    "url": "https://github.com/michael-berardi/ultracompress/issues"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -22,7 +22,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/example/ultracompress.git"
+    "url": "git+https://github.com/michael-berardi/ultracompress.git"
   },
   "scripts": {
     "test": "vitest run",

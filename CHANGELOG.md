@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.5 (2026-11-15) — CLI option validation
+
+- Reject invalid `--vision` values with exit status 2 instead of silently choosing
+  automatic image eligibility. Valid modes remain case-insensitive; compaction
+  output for valid options is unchanged.
+- Align the Hermes manifest with its runtime version (0.5.0) and correct adapter repository links.
+- Shorten setup instructions, separate CLI installation from adapter installation,
+  and correct release-signing requirements.
+
 
 ## 0.6.4 (2026-11-12) — Windows Path fix
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # UltraCompress installer for macOS and Linux:
-#   curl -fsSL https://github.com/your-github-username/ultracompress/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/michael-berardi/ultracompress/releases/latest/download/install.sh | sh
 # Downloads the release binary for this machine (macOS: the signed universal zip; Linux: a static
 # musl tarball for this CPU), checks its SHA-256 before anything is installed, and puts `ultracompress`
 # on your PATH. No sudo, no shell-profile edits; re-running upgrades in place.
