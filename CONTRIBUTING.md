@@ -8,9 +8,9 @@ Requirements: Rust 1.85+, Node.js 22.19+, and Pi 0.85.x or 1.0.4+ for extension 
 
 ```bash
 cargo fmt --all -- --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
-cargo build --release
+cargo test --all-targets -j4
+cargo clippy --all-targets -j4 -- -D warnings
+cargo build --release -j4
 
 cd extension
 npm ci
@@ -27,16 +27,17 @@ tests and benchmark evidence. Never commit real session logs or credentials.
 
 On macOS arm64, use a clean checkout whose HEAD is the `v<workspace version>`
 tag. Install the signing certificates and configure a notarytool keychain profile.
-Set `ULTRACOMPRESS_SIGNING_IDENTITY` to the Developer ID Application identity,
-`ULTRACOMPRESS_INSTALLER_IDENTITY` to the Developer ID Installer identity, and
-`NOTARY_PROFILE`, `ULTRACOMPRESS_PKG_IDENTIFIER` to the keychain profile. Optionally set `ULTRACOMPRESS_OUT` to
+Set `ULTRACOMPRESS_SIGNING_IDENTITY` to the Developer ID Application identity
+and `NOTARY_PROFILE` to the notarytool keychain profile. Optionally set `ULTRACOMPRESS_OUT` to
 an empty output directory (default `./dist/release`). Then run:
 
 ```bash
-smart-build --timeout 60m -- bash scripts/release.sh
+CARGO_BUILD_JOBS=4 bash scripts/release.sh
 ```
 
-The script builds the CLI, signs and notarizes the CLI archive and installer,
-staples the installer, packages the integrations, and writes provenance and
-checksums. Verify signatures, notarization, archive contents and checksums before
+The script builds a universal macOS CLI, signs and notarizes its archive,
+packages the integrations, and writes provenance and checksums. There is no
+macOS package installer. `scripts/build-release-cross.sh` builds Linux and
+Windows archives and stamps the installer templates; see its prerequisites
+before running it. Verify signatures, notarization, archive contents and checksums before
 attaching the assets to a release. Do not put credentials in the repository.

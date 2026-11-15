@@ -121,7 +121,8 @@ fn parse_cli(args: &[String]) -> Cli {
                 c.vision = match val(&mut i).to_lowercase().as_str() {
                     "on" => VisionMode::On,
                     "off" => VisionMode::Off,
-                    _ => VisionMode::Auto,
+                    "auto" => VisionMode::Auto,
+                    _ => die("bad --vision (auto|on|off)"),
                 }
             }
             "--snap-min-chars" => {

@@ -1,70 +1,13 @@
-<div align="center">
-
 # UltraCompress
 
-### Deterministic context compaction. Local, searchable recall. No LLM in the loop.
-
-**Structured briefs instead of model-written summaries. Every condensed byte
-still searchable. $0 per compaction.**
-
-*The compaction layer for people who read their agent's bills.*
-
-[![Latest release](https://img.shields.io/github/v/release/michael-berardi/ultracompress?label=release)](https://github.com/michael-berardi/ultracompress/releases/latest) [![MIT License](https://img.shields.io/github/license/michael-berardi/ultracompress)](LICENSE) ![Rust](https://img.shields.io/badge/built%20with-Rust-orange) ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)
-
-[Install](#install) · [Claude Code](#claude-code) · [Carl](#carl) · [Hermes Agent](#hermes-agent) · [How it works](#representations-and-savings) · [Recall](#history-and-evidence) · [Measurements](#measurements) · [Security](#related-work-and-security)
-
-</div>
-
----
-
-## Download
-
-- **macOS, Apple silicon and Intel:** [UltraCompress-macos-universal.zip](https://github.com/michael-berardi/ultracompress/releases/latest/download/UltraCompress-macos-universal.zip). Unzip it and copy `ultracompress` into your `PATH`. The binary is Developer ID-signed and notarized.
-- **Linux, x86_64 and arm64:** [ultracompress-linux-x86_64.tar.gz](https://github.com/michael-berardi/ultracompress/releases/latest/download/ultracompress-linux-x86_64.tar.gz) and [ultracompress-linux-arm64.tar.gz](https://github.com/michael-berardi/ultracompress/releases/latest/download/ultracompress-linux-arm64.tar.gz). Statically linked (musl); they run on any distribution, glibc or musl.
-- **Windows, x86_64:** [ultracompress-windows-x86_64.zip](https://github.com/michael-berardi/ultracompress/releases/latest/download/ultracompress-windows-x86_64.zip). Unzip it and put `ultracompress.exe` in a folder on your `PATH`.
-- All releases, checksums (`SHA256SUMS`) and provenance: [latest release](https://github.com/michael-berardi/ultracompress/releases/latest).
-- The one-line installers below do the download, checksum and `PATH` setup for you.
-
-UltraCompress is content-aware context compaction for LLM coding agents. It
-builds a structured conversation brief without an LLM request, replaces bulky
-tool output with image frames when supported, and keeps the
-raw session on disk so a recall tool can still find anything that was
-condensed. It ships as a Rust CLI plus a [Pi coding agent](https://pi.dev)
-adapter, a standalone [Claude Code](#claude-code) plugin, built-in support in
-[Carl](#carl) and a [Hermes Agent](#hermes-agent) context engine, all served by
-the same engine.
-
-Summary generation by another model call is a strange way to save model calls.
-UltraCompress skips the middleman: compaction runs locally in roughly 10–300
-ms, deterministically, at zero API cost. In Claude Code that means about 65 ms
-where the built-in summarizer took 23–52 seconds
-([measured](#against-claude-codes-own-compaction)). What it drops stays recoverable,
-ranked recall measured at **94.4% hit@5** on its published fixture
-([docs/BENCHMARKS.md](docs/BENCHMARKS.md)). Context management should not
-require another context-management agent.
-
-## What's new
-
-- **0.6.4**: the Windows installer no longer hard-codes expanded entries into your user Path or loses its expandable type.
-- **0.6.3**: README links use the real GitHub owner (install, badge, download and clone).
-- **0.6.2**: installer fixes for Windows and for a custom bin folder; an existing `ultracompress` the installer did not write is never overwritten.
-- **0.6.1**: the published installers run (the 0.6.0 copies refused to start).
-- **0.6.0**: one-line installers for macOS, Linux and Windows, and published Linux (x86_64, arm64) and Windows (x86_64) binaries.
-- **0.5.1**: one universal (arm64 + x86_64) notarized macOS CLI zip replaces the arm64 zip and pkg.
-- **0.4.2**: patched Pi adapter development dependencies and added Pi 1.0.4+
-  support. Pi 0.85.x compatibility and diagnostic retention are unchanged.
-- **0.4.1**: diagnostic facts from long tool outputs survive in the brief.
-  TypeScript and npm diagnostic codes are recognized. Scanning and fact counts
-  stay bounded; unscanned detail remains available through recall.
-- **Hermes Agent context engine** (`hermes/`): replaces Hermes' model-written
-  compaction summary with the local brief and adds raw-history recall — see
-  [Hermes Agent](#hermes-agent).
-- **0.3.0**: a standalone Claude Code plugin (`claude-code/`) and native
-  Claude Code transcript recall (`--format auto|pi|claude`).
+UltraCompress compacts coding-agent conversations into deterministic briefs
+without a model call. A Rust CLI builds the brief; adapters connect it to Pi,
+Claude Code and Hermes Agent. Recall searches the original session on disk,
+including messages no longer in the model's context.
 
 ## Install
 
-Current release: **0.6.4**. One line installs the `ultracompress` CLI on macOS, Linux or Windows.
+Current CLI release: **0.6.4**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -84,86 +27,46 @@ release `SHA256SUMS` before installing anything, and finish by running `ultracom
 On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`) with a shim in
 `~/.local/bin` (`ULTRACOMPRESS_BIN_DIR`); no sudo, no shell-profile edits. On Windows it lives in
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
-Needs only curl or wget plus tar (sh) or built-in cmdlets (PowerShell). To update, run the same line
+Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
 (for example `0.6.4`).
 
 ### From source
 
-Building from source requires Rust 1.85 or newer. The Pi adapter is tested with Pi 0.85.x and 1.0.4,
-and Node.js 22.19 or newer.
+Requires Rust 1.85+. From a checkout:
 
 ```sh
-git clone --branch v0.6.4 https://github.com/michael-berardi/ultracompress
-cd ultracompress
-cargo build --locked --release
-mkdir -p ~/.local/bin
-cp target/release/ultracompress ~/.local/bin/
-pi install ./extension
+cargo install --locked --path crates/ultracompress-cli
 ```
 
-The release's macOS CLI zip is universal (arm64 and x86_64) and Developer ID-signed
-and notarized; see [Download](#download). Existing source installations should use
-the build steps above to replace their `~/.local/bin` copy. UltraTerm bundles the bridge with its
-managed Steak Pi runtime. Do not load the standalone extension alongside
-Steak Pi's copy.
+Ensure Cargo's bin directory is on `PATH`. The CLI does not require Node.js or
+an agent installation.
 
-VCC compaction and raw-history recall work without any optional codec. The
-adapter falls back to Pi's core compaction when the bridge is unavailable or fails.
+## First use
 
-## Claude Code
-
-A standalone, drop-in Claude Code plugin lives in
-[`claude-code/`](claude-code/README.md). One session:
+Inspect a Pi session, then compact it without image frames:
 
 ```sh
-claude --plugin-dir /path/to/ultracompress/claude-code
+ultracompress stats --session session.jsonl
+ultracompress compact --session session.jsonl --policy vcc --vision off
+ultracompress recall --session session.jsonl --query "build failure"
 ```
 
-or symlink the folder into `~/.claude/skills/ultracompress` to auto-load. It
-replaces Claude Code's compaction summarizer with the same deterministic local
-engine — no model call for the summary — and registers an
-`ultracompress_recall` tool over the raw transcript. If the binary is missing
-or fails, one log line explains why and Claude's stock compaction runs;
-nothing bricks. Claude recall defaults to the whole current session (every
-branch, pre-compaction history included) because lineage alone stops at
-compaction boundaries in real transcripts.
+Commands write JSON to stdout and errors to stderr. Compaction requires a safe
+cut before a user turn; it can reject a session that has too little history.
+`compact` and `stats` read Pi sessions. `recall` also reads Claude Code
+transcripts. Adapters provide JSON input for other conversation formats.
 
-Full install, the binary lookup order, and uninstall:
-[`claude-code/README.md`](claude-code/README.md).
+## Agent adapters
 
-**UltraTerm users already have this built in. Do not load both.**
+- **Pi:** with Node.js 22.19+ and Pi 0.85.x or 1.0.4+, run `pi install ./extension`
+  from a checkout. A missing or failing binary falls back to Pi compaction.
+- **Claude Code:** see [plugin setup](claude-code/README.md). Function hooks
+  require `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; load the folder with
+  `claude --plugin-dir ./claude-code`.
+- **Hermes Agent:** see [engine setup and settings](hermes/README.md).
 
-## Carl
-
-Carl, the agent bot gateway, ships
-this repository's Pi adapter in `vendor/ultracompress` and turns it on by
-itself when it finds the `ultracompress` binary (`ULTRACOMPRESS_BIN`, then
-`~/.ultraterm/bin`, `~/.local/bin`, `~/.cargo/bin` and `PATH`). There is
-nothing to install beyond the binary. Carl compacts at its own context budget
-(`contextBudget`, 96k tokens by default) whatever the model's window is, and
-gives the agent `ultracompress_recall` over its own session transcripts. Set
-`"ultracompress": "off"` in `carl.json` to use the SDK's built-in compaction.
-
-## Hermes Agent
-
-A Hermes context engine lives in [`hermes/`](hermes/README.md). Link it into
-your profile and select it:
-
-```sh
-ln -s /path/to/ultracompress/hermes/ultracompress ~/.hermes/plugins/ultracompress
-hermes config set context.engine ultracompress
-```
-
-Hermes keeps its own compaction pipeline; the engine replaces only the summary
-step with the local brief, verbatim excerpts of the agent's replies and Hermes'
-deterministic sections, and registers `ultracompress_recall` over a private raw
-archive of everything condensed. It compacts at 30% of the window instead of
-Hermes' 75% floor for models under 512k tokens. On one real 190k-token Hermes
-session the summary took 0.05 s instead of 46.8 s and answered more recall
-questions; missing or failing binaries fall back to Hermes' built-in summary
-with one log line. Settings, measurements and uninstall:
-[`hermes/README.md`](hermes/README.md).
+Do not load a standalone adapter if your host already bundles it.
 
 ## Representations and savings
 
@@ -228,33 +131,6 @@ The CLI requires `--session FILE` (Pi session or Claude Code transcript;
 Regex is explicit via `--regex` / tool `regex:true`; the command also accepts
 `/pattern/`.
 
-## Measurements
-
-The recall fixture reports **94.4% hit@5** across 72 sampled facts from nine
-sessions. It measures UltraCompress's retrieval accuracy; other systems' recall
-accuracy is outside that fixture's scope. Offline compaction footprints,
-latency, task-cost, and JSON-size measurements are documented in
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md); they are fixture-specific, not
-guaranteed product performance.
-
-### Against Claude Code's own compaction
-
-Two real Claude Code sessions (Opus 5.5, 273k and 370k tokens), each compacted
-from an identical copy by Claude's built-in summarizer and by UltraCompress.
-Figures are Claude Code's own counters.
-
-| | Claude built-in | UltraCompress |
-| --- | --- | --- |
-| Compaction time | 23.0 s and 51.9 s | **65 ms and 66 ms** |
-| Tokens sent to a model to write the summary | 273k and 370k | **0** |
-| Context after | 3.2k and 11.4k | 11.3k and 7.9k |
-| Edited files recalled, memory only | 8 of 12 | 8 of 12 |
-| Edited files recovered with recall | — | **12 of 12** |
-
-Roughly 350–800× faster, no model call, and nothing actually lost. Two
-sessions is a small sample; the method, harness and caveats are in
-[docs/BENCHMARKS-CLAUDE.md](docs/BENCHMARKS-CLAUDE.md).
-
 ## Commands (Pi adapter)
 
 | Command | Purpose |
@@ -301,9 +177,9 @@ migration fallbacks. New installations use the UltraCompress names.
 
 ```sh
 cargo fmt --all -- --check
-cargo test --locked --all-targets
-cargo clippy --locked --all-targets -- -D warnings
-cargo build --locked --release
+cargo test --locked --all-targets -j4
+cargo clippy --locked --all-targets -j4 -- -D warnings
+cargo build --locked --release -j4
 cd extension
 npm ci
 npm run typecheck
@@ -328,19 +204,12 @@ The Rust CLI is independent of Pi. Its JSON-in/JSON-out contract is usable by
 other harnesses. Offline benchmark scripts are under `scripts/`; live benchmark
 scripts make provider calls and are not required for ordinary unit testing.
 
-## Related work and security
+## Measurements and security
 
-The VCC engine descends from [pi-vcc](https://github.com/sting8k/pi-vcc) and
-[VCC](https://github.com/lllyasviel/VCC). Snap frames adapt the image-frame
-compaction approach. Diagnostic retention is informed by
-[context-mode](https://github.com/mksglu/context-mode)'s explicit error events;
-UltraCompress implements its own bounded extraction without adding a database
-or tool proxy.
+[Benchmark methods and historical results](docs/BENCHMARKS.md) and the
+[compaction comparison](docs/BENCHMARKS-CLAUDE.md) describe their fixtures and
+limitations. Private-session measurements are not reproducible from this
+checkout alone and are not product-wide performance guarantees.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
-[MIT License](LICENSE). Report security issues privately rather than including
-credentials or session records in public issues.
-
----
-
-Part of [Pareto Cybernetics](https://paretocybernetics.com/projects/ultracompress/): free, private, open-source tools for working with AI agents.
+[MIT License](LICENSE). Keep raw sessions and credentials out of public issues.
