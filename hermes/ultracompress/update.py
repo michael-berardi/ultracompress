@@ -3,23 +3,28 @@
 The adapter starts the one anonymous check in a daemon thread from a live CLI
 session and reports the result in `get_status()`. Failed checks are cached with
 their cause; nothing is printed into agent turns or JSON tool results.
+
+The cache is shared with the CLI and Pi: one `update.json` in the platform cache
+directory, snake_case keys and integer Unix seconds. An old Pi cache (camelCase
+keys, milliseconds) is migrated when it is read.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-VERSION = "0.6.7"
+VERSION = "0.6.8"
 REPOSITORY = "https://github.com/michael-berardi/ultracompress"
 CHECK_INTERVAL = 24 * 60 * 60
 CHECK_TIMEOUT = 4.0
+CACHE_FILE = "update.json"
 USER_AGENT = "ultracompress-update-check"
 OPT_OUT_ENV = "ULTRACOMPRESS_NO_UPDATE_CHECK"
 
@@ -72,23 +77,66 @@ def parse_release(body: str) -> Dict[str, str]:
     return {"version": tag[1:] if tag.startswith("v") else tag, "notes": "\n".join(lines)[:600]}
 
 
-def cache_path(state_dir: str = "") -> Path:
-    if state_dir:
-        return Path(state_dir) / "update.json"
-    if os.environ.get("XDG_CACHE_HOME"):
-        root = Path(os.environ["XDG_CACHE_HOME"])
-    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        root = Path(os.environ["LOCALAPPDATA"])
-    elif os.name == "posix" and sys_platform() == "darwin":
-        root = Path.home() / "Library/Caches"
-    else:
-        root = Path.home() / ".cache"
-    return root / "ultracompress" / "update.json"
-
-
 def sys_platform() -> str:
     import sys
     return sys.platform
+
+
+def cache_path(state_dir: str = "", env: Optional[Dict[str, str]] = None,
+               platform: Optional[str] = None, home: Optional[Path] = None) -> Path:
+    """The same cache root as the CLI and Pi, with the same file name."""
+    if state_dir:
+        return Path(state_dir) / CACHE_FILE
+    environ = os.environ if env is None else env
+    current = platform or sys_platform()
+    if environ.get("XDG_CACHE_HOME"):
+        root = Path(environ["XDG_CACHE_HOME"])
+    elif current == "win32" and environ.get("LOCALAPPDATA"):
+        root = Path(environ["LOCALAPPDATA"])
+    elif current == "darwin":
+        root = (home or Path.home()) / "Library" / "Caches"
+    else:
+        root = (home or Path.home()) / ".cache"
+    return root / "ultracompress" / CACHE_FILE
+
+
+def now_seconds() -> int:
+    return int(time.time())
+
+
+def _stamp(data: Dict[str, Any], key: str, legacy: str) -> int:
+    value = data.get(key, data.get(legacy))
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not math.isfinite(value) or value <= 0:
+        return 0
+    milliseconds = key not in data and legacy in data
+    return int(value / 1000 if milliseconds else value)
+
+
+def _text(data: Dict[str, Any], key: str, legacy: str) -> Optional[str]:
+    value = data.get(key, data.get(legacy))
+    return value if isinstance(value, str) else None
+
+
+def normalise_state(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Read the canonical seconds schema, migrating the old Pi millisecond file."""
+    release = data.get("release")
+    parsed_release = None
+    if isinstance(release, dict) and isinstance(release.get("version"), str):
+        parsed_release = {
+            "version": release["version"],
+            "notes": release.get("notes") if isinstance(release.get("notes"), str) else "",
+        }
+    return {
+        "checked_at": _stamp(data, "checked_at", "checkedAt"),
+        "last_error": _text(data, "last_error", "lastError"),
+        "release": parsed_release,
+        "skipped_version": _text(data, "skipped_version", "skippedVersion"),
+        "shown_version": _text(data, "shown_version", "shownVersion"),
+        "shown_at": _stamp(data, "shown_at", "shownAt"),
+        "auto_attempted_version": _text(data, "auto_attempted_version", "autoAttemptedVersion"),
+    }
 
 
 def load_state(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -96,14 +144,14 @@ def load_state(path: Optional[Path] = None) -> Dict[str, Any]:
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
         if isinstance(data, dict):
-            return {**DEFAULT_STATE, **data}
+            return normalise_state(data)
     except (OSError, ValueError):
         pass
     return dict(DEFAULT_STATE)
 
 
 def save_state(state: Dict[str, Any], path: Optional[Path] = None) -> None:
-    """Atomic, owner-only write."""
+    """Atomic, owner-only write of one canonical state object."""
     target = path or cache_path()
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
@@ -113,7 +161,7 @@ def save_state(state: Dict[str, Any], path: Optional[Path] = None) -> None:
     fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(state, handle, indent=2)
+            json.dump(normalise_state(state), handle, indent=2)
             handle.write("\n")
         os.chmod(tmp, 0o600)
         os.replace(tmp, target)
@@ -126,8 +174,9 @@ def save_state(state: Dict[str, Any], path: Optional[Path] = None) -> None:
 
 
 def check_due(state: Dict[str, Any], now: Optional[float] = None) -> bool:
-    now = time.time() if now is None else now
-    return not state.get("checked_at") or now - float(state["checked_at"]) >= CHECK_INTERVAL
+    now = now_seconds() if now is None else now
+    checked = state.get("checked_at") or 0
+    return not checked or now - float(checked) >= CHECK_INTERVAL
 
 
 def gate(env: Optional[Dict[str, str]] = None, interactive: bool = True) -> bool:
@@ -158,7 +207,7 @@ def run_check(state: Dict[str, Any], path: Optional[Path] = None,
               fetcher: Optional[Callable[[], Dict[str, str]]] = None) -> Dict[str, Any]:
     """Check when due; a failure is recorded with its cause, never raised."""
     result = dict(state)
-    now = time.time()
+    now = now_seconds()
     if not check_due(result, now):
         return result
     try:
@@ -176,20 +225,21 @@ def run_check(state: Dict[str, Any], path: Optional[Path] = None,
 
 def showable(state: Dict[str, Any], release: Dict[str, str], current: str = VERSION,
              now: Optional[float] = None) -> bool:
-    now = time.time() if now is None else now
+    now = now_seconds() if now is None else now
     version = release["version"]
     if not is_newer(version, current):
         return False
     if state.get("skipped_version") == version:
         return False
-    if state.get("shown_version") == version and now - float(state.get("shown_at") or 0) < CHECK_INTERVAL:
+    shown_at = state.get("shown_at") or 0
+    if state.get("shown_version") == version and now - float(shown_at) < CHECK_INTERVAL:
         return False
     return True
 
 
 def mark_shown(state: Dict[str, Any], version: str, now: Optional[float] = None) -> None:
     state["shown_version"] = version
-    state["shown_at"] = time.time() if now is None else now
+    state["shown_at"] = now_seconds() if now is None else int(now)
 
 
 def skip(state: Dict[str, Any], version: Optional[str]) -> None:

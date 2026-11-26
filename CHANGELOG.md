@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.8 (2026-11-26) — Shared update cache
+
+CLI, core, Pi, Claude Code and Hermes adapters are all at 0.6.8.
+
+- Fixed finding (5): the CLI, Pi and Hermes adapters now share one per-machine
+  cache file at `<platform cache root>/ultracompress/update.json`. All three
+  read and write the same snake_case schema with integer Unix seconds and the
+  same 86,400-second interval, so a check by one adapter suppresses the others
+  for 24 hours. Old Pi caches with camelCase millisecond timestamps are
+  migrated on read. The Windows and macOS cache roots now match too.
+- Capped the background `install.log` at 256 KB; the newest lines are kept and
+  the file stays `0600` (contract §4a). Checksum verification, the single
+  rollback copy, snapshot pruning and Hermes archive bounds are unchanged.
+- Added cross-adapter regression tests using one shared cache fixture, cache
+  path and legacy-migration tests in Rust, Vitest and Python.
+
 ## 0.6.7 (2026-11-26) — Update contract v1
 
 CLI, core, Pi, Claude Code and Hermes adapters are all at 0.6.7.

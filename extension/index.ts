@@ -46,7 +46,7 @@ import {
 
 const AUTO_CONTINUE_CUSTOM_TYPE = "ultracompress-auto-continue";
 /** Kept in sync with package.json by the repository privacy guard test. */
-const ADAPTER_VERSION = "0.6.7";
+const ADAPTER_VERSION = "0.6.8";
 
 export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();
@@ -65,9 +65,9 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
           await ctx.ui.notify(updateNotice(state.release, ADAPTER_VERSION), "info");
           markShown(state, state.release.version);
           saveUpdateState(state);
-          if (settings.updates.autoInstall && !state.autoAttemptedVersion &&
+          if (settings.updates.autoInstall && !state.auto_attempted_version &&
               isNewer(state.release.version, ADAPTER_VERSION)) {
-            state.autoAttemptedVersion = state.release.version;
+            state.auto_attempted_version = state.release.version;
             saveUpdateState(state);
             // The CLI owns the checksum-verified install and its own opt-in config.
             execFile(ultracompressBin, ["update", "--auto", "on"], () => {});
@@ -353,17 +353,17 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         if (mode === "--skip") {
           const checked = await runCheck(state);
           if (checked.release) {
-            checked.skippedVersion = checked.release.version;
+            checked.skipped_version = checked.release.version;
             saveUpdateState(checked);
             await ctx.ui.notify(`Skipping notices for ${checked.release.version} until a newer release.`, "info");
           } else {
-            await ctx.ui.notify(checkReport(null, checked.lastError), "info");
+            await ctx.ui.notify(checkReport(null, checked.last_error), "info");
           }
           return;
         }
         if (mode === "--check" || mode === "") {
           const checked = await runCheck(state);
-          await ctx.ui.notify(checkReport(checked.release, checked.lastError), "info");
+          await ctx.ui.notify(checkReport(checked.release, checked.last_error), "info");
           return;
         }
         await ctx.ui.notify("usage: /ultracompress-update [--check|--skip|--auto on|off|status]", "warning");

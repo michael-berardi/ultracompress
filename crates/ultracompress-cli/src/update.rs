@@ -182,23 +182,49 @@ pub fn background_auto_install(current: &str) {
     }
 }
 
+/// Contract §4a: one bounded install log (256 KB max), never an unbounded
+/// append. Old bytes are dropped from the front; the newest line is kept.
+pub const MAX_INSTALL_LOG_BYTES: usize = 256 * 1024;
+const MAX_INSTALL_LOG_LINE_CHARS: usize = 1000;
+
+fn write_install_log(path: &Path, line: &str, now: u64) -> Result<(), String> {
+    let brief: String = line.chars().take(MAX_INSTALL_LOG_LINE_CHARS).collect();
+    let mut data = std::fs::read(path).unwrap_or_default();
+    data.extend_from_slice(format!("{now} {brief}\n").as_bytes());
+    if data.len() > MAX_INSTALL_LOG_BYTES {
+        let cut = data.len() - MAX_INSTALL_LOG_BYTES;
+        let mut start = data[cut..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|offset| cut + offset + 1)
+            .unwrap_or(cut);
+        // Skip UTF-8 continuation bytes so the retained tail stays valid.
+        while start < data.len() && (data[start] & 0xC0) == 0x80 {
+            start += 1;
+        }
+        data.drain(..start);
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "install log has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("cannot create log dir: {e}"))?;
+    let tmp = parent.join(format!(".install-{}-{}.log.tmp", std::process::id(), now));
+    std::fs::write(&tmp, &data).map_err(|e| format!("cannot write install log: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("cannot protect install log: {e}"))?;
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("cannot publish install log: {e}")
+    })
+}
+
 fn log_install(line: &str) {
     let path = contract::cache_dir().join("install.log");
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(file, "{} {}", contract::now_secs(), line);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
-    }
+    let _ = write_install_log(&path, line, contract::now_secs());
 }
 
 // ---- Install safety -------------------------------------------------------
@@ -636,6 +662,37 @@ mod tests {
         );
         rollback(&target).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_log_stays_bounded_at_256_kb() {
+        let dir = std::env::temp_dir().join(format!("uc-log-test-{}", std::process::id()));
+        let path = dir.join("install.log");
+        let _ = std::fs::remove_dir_all(&dir);
+        let filler = "x".repeat(16 * 1024);
+        write_install_log(&path, &format!("old {filler}"), 1).unwrap();
+        for stamp in 2..400 {
+            write_install_log(&path, &format!("entry {stamp} {filler}"), stamp).unwrap();
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.len() <= MAX_INSTALL_LOG_BYTES);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("entry 399 "));
+        assert!(!text.contains("old "));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert!(!std::fs::read_dir(&dir).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

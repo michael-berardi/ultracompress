@@ -12,6 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One check per 24 h per machine, and one notice per 24 h per version.
 pub const CHECK_INTERVAL_SECS: u64 = 86_400;
+/// The single cache file name used by the CLI, Pi and Hermes.
+pub const CACHE_FILE: &str = "update.json";
 /// Hard ceiling for the anonymous request (contract: at most four seconds).
 pub const CHECK_TIMEOUT_SECS: u64 = 4;
 /// Fixed, anonymous user agent: no id, version, usage or machine data.
@@ -167,17 +169,17 @@ pub fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// The same platform cache root is used by the CLI, Pi and Hermes so the one
+/// daily check is shared by all three adapters on a machine. Overrides are
+/// read in the same order: `XDG_CACHE_HOME`, Windows `LOCALAPPDATA`, macOS
+/// `~/Library/Caches`, then `~/.cache` (with `USERPROFILE` on Windows).
 pub fn cache_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
     if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
         if !xdg.is_empty() {
             return PathBuf::from(xdg).join("ultracompress");
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if !home.is_empty() {
-            return PathBuf::from(home).join("Library/Caches/ultracompress");
         }
     }
     #[cfg(windows)]
@@ -186,6 +188,12 @@ pub fn cache_dir() -> PathBuf {
             if !local.is_empty() {
                 return PathBuf::from(local).join("ultracompress");
             }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if !home.is_empty() {
+            return PathBuf::from(home).join("Library/Caches/ultracompress");
         }
     }
     if !home.is_empty() {
@@ -216,7 +224,7 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn cache_path() -> PathBuf {
-    cache_dir().join("update.json")
+    cache_dir().join(CACHE_FILE)
 }
 
 pub fn config_path() -> PathBuf {
@@ -262,8 +270,55 @@ fn read_json<T: serde::de::DeserializeOwned + Default>(path: &PathBuf) -> T {
         .unwrap_or_default()
 }
 
+/// The one on-disk schema: snake_case keys and integer Unix seconds on all
+/// adapters. A pre-0.6.8 Pi cache used camelCase keys with milliseconds; it is
+/// converted here so the daily interval does not change meaning after an
+/// upgrade. A Hermes cache with fractional seconds is truncated, not treated
+/// as milliseconds.
+pub fn parse_cache(body: &str) -> UpdateCache {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return UpdateCache::default();
+    };
+    let Some(obj) = value.as_object() else {
+        return UpdateCache::default();
+    };
+    let stamp = |key: &str, legacy: &str| -> u64 {
+        let legacy_unit = !obj.contains_key(key) && obj.contains_key(legacy);
+        let raw = obj.get(key).or_else(|| obj.get(legacy));
+        match raw.and_then(|value| value.as_f64()) {
+            Some(number) if number.is_finite() && number > 0.0 => {
+                let seconds = if legacy_unit { number / 1000.0 } else { number };
+                seconds as u64
+            }
+            _ => 0,
+        }
+    };
+    let text = |key: &str, legacy: &str| -> Option<String> {
+        obj.get(key)
+            .or_else(|| obj.get(legacy))
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+    };
+    let release = obj
+        .get("release")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Release>(value).ok());
+    UpdateCache {
+        checked_at: stamp("checked_at", "checkedAt"),
+        last_error: text("last_error", "lastError"),
+        release,
+        skipped_version: text("skipped_version", "skippedVersion"),
+        shown_version: text("shown_version", "shownVersion"),
+        shown_at: stamp("shown_at", "shownAt"),
+        auto_attempted_version: text("auto_attempted_version", "autoAttemptedVersion"),
+    }
+}
+
 pub fn read_cache() -> UpdateCache {
-    read_json(&cache_path())
+    match std::fs::read_to_string(cache_path()) {
+        Ok(body) => parse_cache(&body),
+        Err(_) => UpdateCache::default(),
+    }
 }
 
 pub fn read_config() -> UpdateConfig {
@@ -532,6 +587,42 @@ mod tests {
         let (text, code) = check_report(Some(&release), None, "0.6.6");
         assert_eq!(code, 10);
         assert!(!text.contains("notes")); // report only, release notes come from `update`
+    }
+
+    #[test]
+    fn cache_schema_uses_snake_case_unix_seconds() {
+        let canonical = r#"{"checked_at":1700000000,"shown_at":1700000000,
+            "release":{"version":"9.9.9","notes":"notes"},
+            "skipped_version":null,"last_error":null,"auto_attempted_version":null}"#;
+        let cache = parse_cache(canonical);
+        assert_eq!(cache.checked_at, 1_700_000_000);
+        assert_eq!(cache.shown_at, 1_700_000_000);
+        assert_eq!(cache.release.as_ref().unwrap().version, "9.9.9");
+        let written = serde_json::to_string(&cache).unwrap();
+        assert!(written.contains("\"checked_at\""));
+        assert!(!written.contains("checkedAt"));
+        assert!(!check_due(&cache, 1_700_000_000 + CHECK_INTERVAL_SECS - 1));
+        assert!(check_due(&cache, 1_700_000_000 + CHECK_INTERVAL_SECS));
+    }
+
+    #[test]
+    fn legacy_pi_milliseconds_are_converted_on_read() {
+        let legacy = r#"{"checkedAt":1700000000000,"shownAt":1700000000000,
+            "release":{"version":"9.9.9","notes":"notes"},
+            "lastError":"HTTP 503","shownVersion":"9.9.9"}"#;
+        let cache = parse_cache(legacy);
+        assert_eq!(cache.checked_at, 1_700_000_000);
+        assert_eq!(cache.shown_at, 1_700_000_000);
+        assert_eq!(cache.last_error.as_deref(), Some("HTTP 503"));
+        assert_eq!(cache.shown_version.as_deref(), Some("9.9.9"));
+        assert!(!check_due(&cache, 1_700_000_000 + CHECK_INTERVAL_SECS - 1));
+        assert_eq!(
+            serde_json::to_string(&cache)
+                .unwrap()
+                .matches("checked_at")
+                .count(),
+            1
+        );
     }
 
     #[test]

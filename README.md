@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.6.7**. Install a prebuilt binary:
+Current CLI release: **0.6.8**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.7`).
+(for example `0.6.8`).
 
 ### From source
 
@@ -65,8 +65,8 @@ Interactive use checks for a newer public release once per 24 hours. The check i
 anonymous and never appears in JSON output; auto-install is opt-in. See
 [Updates](docs/updates.md) for the commands (`ultracompress update --check`,
 `--skip`, `--auto on|off|status`, `--rollback`), the opt-out, and the privacy
-details. The current CLI version is **0.6.7**; all four adapters are aligned at
-0.6.7.
+details. The current CLI version is **0.6.8**; all four adapters are aligned at
+0.6.8.
 
 ## Agent adapters
 
@@ -259,9 +259,12 @@ Local files:
   `0700`, the file `0600`, and the newest whole entries within 64 MiB are kept.
   Set `archive_max_bytes` in the adapter's `settings.json` to change the budget.
   Delete the archive with `rm -rf "$HERMES_HOME/ultracompress"`.
-- Update state lives in the platform cache directory (`~/.cache/ultracompress/update.json`,
-  `~/Library/Caches/ultracompress` on macOS) as a `0600` file; the opt-in auto-install
-  setting lives in the platform config directory. Delete them with
+- Update checks share one `0600` `update.json` in the platform cache directory
+  (`~/Library/Caches/ultracompress` on macOS, `%LOCALAPPDATA%\ultracompress` on
+  Windows, `~/.cache/ultracompress` elsewhere, or `$XDG_CACHE_HOME/ultracompress`).
+  The CLI, Pi and Hermes all read the same Unix-second timestamps, so the daily
+  check is shared. The opt-in auto-install setting lives in the platform config
+  directory. Delete them with
   `rm -rf ~/.cache/ultracompress ~/.config/ultracompress` (adjust for your platform).
 - With `debug: true`, Pi overwrites one diagnostics file at
   `~/.local/state/ultracompress/debug.json` (`$XDG_STATE_HOME` overrides the

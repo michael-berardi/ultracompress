@@ -23,6 +23,18 @@ The result is cached atomically in a `0600` file in the platform cache
 directory; a failed check records its cause there, is never printed as noise,
 and is not retried in a loop.
 
+### One shared cache
+
+The CLI, Pi and Hermes all use `<cache root>/ultracompress/update.json`, where
+the root is `$XDG_CACHE_HOME`, `%LOCALAPPDATA%` on Windows,
+`~/Library/Caches` on macOS, or `~/.cache` otherwise. The file has one schema:
+`checked_at`, `shown_at`, `last_error`, `release`, `skipped_version`,
+`shown_version` and `auto_attempted_version`. Timestamps are **integer Unix
+seconds** (not milliseconds) and `CHECK_INTERVAL_SECS = 86_400` everywhere, so
+whichever adapter checks first suppresses the check in the others for 24 hours.
+A cache from an older Pi adapter that used camelCase keys and milliseconds is
+converted on read; it is rewritten in the shared format on the next check.
+
 ## When checks are off
 
 Checks are off automatically when stdout/stderr are not a terminal (CLI), in
@@ -59,7 +71,7 @@ A notice appears at most once per 24 hours per version. Skipping a version
 hides that version only; a newer release notifies again. The notice reads:
 
 ```text
-ultracompress 0.6.8 available (you have 0.6.7) · run: ultracompress update
+ultracompress 0.6.9 available (you have 0.6.8) · run: ultracompress update
 turn on automatic updates: ultracompress update --auto on · skip: ultracompress update --skip
 ```
 
@@ -75,9 +87,10 @@ Automatic installation is off by default and is stored in the CLI config
 (`~/.config/ultracompress/config.json`, or the platform config directory), so
 it survives updates. When it is on, a discovered release is installed in a
 detached, low-priority worker; the new binary applies on the next start. The
-worker writes to `install.log` in the update cache directory. A failure leaves
-the current binary working, records the cause, and falls back to the notice.
-An environment variable never turns auto-install on.
+worker writes to `install.log` in the update cache directory. That log is one
+bounded file (256 KB maximum; the oldest lines are dropped), written `0600`.
+A failure leaves the current binary working, records the cause, and falls back
+to the notice. An environment variable never turns auto-install on.
 
 ## Install safety
 

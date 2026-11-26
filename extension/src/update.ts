@@ -5,14 +5,20 @@
  * stderr notice. One anonymous GET, at most daily, only when a live UI exists;
  * never in CI, headless/print mode, or when the user opted out. Auto-install is
  * opt-in and is delegated to the CLI, which owns checksum verification.
+ *
+ * The cache is shared with the CLI and Hermes: one `update.json` in the
+ * platform cache directory, snake_case keys and integer Unix seconds. A
+ * pre-0.6.8 Pi cache (camelCase keys, milliseconds) is migrated on read.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { PACKAGE_VERSION, REPOSITORY } from "./metadata.ts";
 
-export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** One check per 24 h per machine, and one notice per 24 h per version. */
+export const CHECK_INTERVAL_SECS = 24 * 60 * 60;
 export const CHECK_TIMEOUT_MS = 4000;
+export const CACHE_FILE = "update.json";
 export const USER_AGENT = "ultracompress-update-check";
 export const OPT_OUT_ENV = "ULTRACOMPRESS_NO_UPDATE_CHECK";
 
@@ -22,28 +28,41 @@ export interface Release {
 }
 
 export interface UpdateState {
-  checkedAt: number;
-  lastError: string | null;
+  checked_at: number;
+  last_error: string | null;
   release: Release | null;
-  skippedVersion: string | null;
-  shownVersion: string | null;
-  shownAt: number;
-  autoAttemptedVersion: string | null;
+  skipped_version: string | null;
+  shown_version: string | null;
+  shown_at: number;
+  auto_attempted_version: string | null;
 }
 
 export const DEFAULT_UPDATE_STATE: UpdateState = {
-  checkedAt: 0,
-  lastError: null,
+  checked_at: 0,
+  last_error: null,
   release: null,
-  skippedVersion: null,
-  shownVersion: null,
-  shownAt: 0,
-  autoAttemptedVersion: null,
+  skipped_version: null,
+  shown_version: null,
+  shown_at: 0,
+  auto_attempted_version: null,
 };
 
-export function updateCachePath(): string {
-  const root = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
-  return path.join(root, "ultracompress", "update.json");
+/** Same cache root as Rust and Python: XDG, Windows LocalAppData, macOS
+ * Library/Caches, then ~/.cache. The file name and time unit are shared too. */
+export function updateCachePath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = os.homedir(),
+): string {
+  if (env.XDG_CACHE_HOME) return path.join(env.XDG_CACHE_HOME, "ultracompress", CACHE_FILE);
+  if (platform === "win32" && env.LOCALAPPDATA) {
+    return path.join(env.LOCALAPPDATA, "ultracompress", CACHE_FILE);
+  }
+  if (platform === "darwin" && home) {
+    return path.join(home, "Library", "Caches", "ultracompress", CACHE_FILE);
+  }
+  if (home) return path.join(home, ".cache", "ultracompress", CACHE_FILE);
+  return path.join(process.cwd(), "ultracompress-update-cache", CACHE_FILE);
 }
 
 function privateDir(dir: string): void {
@@ -51,18 +70,66 @@ function privateDir(dir: string): void {
   try { fs.chmodSync(dir, 0o700); } catch {}
 }
 
-export function loadUpdateState(file = updateCachePath()): UpdateState {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (parsed && typeof parsed === "object") return { ...DEFAULT_UPDATE_STATE, ...parsed };
-  } catch {}
-  return { ...DEFAULT_UPDATE_STATE };
+function toSeconds(value: unknown, milliseconds: boolean): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(milliseconds ? value / 1000 : value);
 }
 
+function asText(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asRelease(value: unknown): Release | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.version !== "string" || typeof record.notes !== "string") return null;
+  return { version: record.version, notes: record.notes };
+}
+
+/** Read the canonical schema, migrating the old Pi camelCase millisecond file. */
+export function parseUpdateState(body: string): UpdateState {
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return { ...DEFAULT_UPDATE_STATE }; }
+  if (!parsed || typeof parsed !== "object") return { ...DEFAULT_UPDATE_STATE };
+  const record = parsed as Record<string, unknown>;
+  const legacyChecked = record.checkedAt;
+  const legacyShown = record.shownAt;
+  return {
+    checked_at: toSeconds(record.checked_at ?? legacyChecked, legacyChecked !== undefined),
+    last_error: asText(record.last_error),
+    release: asRelease(record.release),
+    skipped_version: asText(record.skipped_version ?? record.skippedVersion),
+    shown_version: asText(record.shown_version ?? record.shownVersion),
+    shown_at: toSeconds(record.shown_at ?? legacyShown, legacyShown !== undefined),
+    auto_attempted_version: asText(record.auto_attempted_version ?? record.autoAttemptedVersion),
+  };
+}
+
+export function loadUpdateState(file = updateCachePath()): UpdateState {
+  try {
+    return parseUpdateState(fs.readFileSync(file, "utf8"));
+  } catch {
+    return { ...DEFAULT_UPDATE_STATE };
+  }
+}
+
+/** Write exactly one canonical state object: snake_case keys, Unix seconds. */
 export function saveUpdateState(state: UpdateState, file = updateCachePath()): void {
   privateDir(path.dirname(file));
+  const canonical: UpdateState = {
+    checked_at: Math.floor(state.checked_at > 0 ? state.checked_at : 0),
+    last_error: state.last_error,
+    release: state.release && {
+      version: state.release.version,
+      notes: state.release.notes,
+    },
+    skipped_version: state.skipped_version,
+    shown_version: state.shown_version,
+    shown_at: Math.floor(state.shown_at > 0 ? state.shown_at : 0),
+    auto_attempted_version: state.auto_attempted_version,
+  };
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
+  fs.writeFileSync(tmp, JSON.stringify(canonical, null, 2) + "\n", { mode: 0o600 });
   try { fs.chmodSync(tmp, 0o600); } catch {}
   fs.renameSync(tmp, file);
 }
@@ -101,20 +168,24 @@ export function latestReleaseUrl(repository = REPOSITORY): string {
   return `https://api.github.com/repos/${match[1]}/${match[2]}/releases/latest`;
 }
 
-export function checkDue(state: UpdateState, now = Date.now()): boolean {
-  return state.checkedAt <= 0 || now - state.checkedAt >= CHECK_INTERVAL_MS;
+export function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
-export function showable(state: UpdateState, release: Release, current = PACKAGE_VERSION, now = Date.now()): boolean {
+export function checkDue(state: UpdateState, now = nowSeconds()): boolean {
+  return state.checked_at <= 0 || now - state.checked_at >= CHECK_INTERVAL_SECS;
+}
+
+export function showable(state: UpdateState, release: Release, current = PACKAGE_VERSION, now = nowSeconds()): boolean {
   if (!isNewer(release.version, current)) return false;
-  if (state.skippedVersion === release.version) return false;
-  if (state.shownVersion === release.version && now - state.shownAt < CHECK_INTERVAL_MS) return false;
+  if (state.skipped_version === release.version) return false;
+  if (state.shown_version === release.version && now - state.shown_at < CHECK_INTERVAL_SECS) return false;
   return true;
 }
 
-export function markShown(state: UpdateState, version: string, now = Date.now()): void {
-  state.shownVersion = version;
-  state.shownAt = now;
+export function markShown(state: UpdateState, version: string, now = nowSeconds()): void {
+  state.shown_version = version;
+  state.shown_at = now;
 }
 
 export function notice(release: Release, current = PACKAGE_VERSION): string {
@@ -158,15 +229,14 @@ export async function fetchRelease(url = latestReleaseUrl(), fetchImpl: FetchLik
 /** Check only when due; a failed check is recorded with its cause, never thrown. */
 export async function runCheck(state: UpdateState, file = updateCachePath(), fetchImpl?: FetchLike): Promise<UpdateState> {
   const next: UpdateState = { ...state };
-  const now = Date.now();
-  if (!checkDue(next, now)) return next;
+  if (!checkDue(next)) return next;
   try {
     next.release = await fetchRelease(latestReleaseUrl(), fetchImpl);
-    next.lastError = null;
+    next.last_error = null;
   } catch (error) {
-    next.lastError = error instanceof Error ? error.message : String(error);
+    next.last_error = error instanceof Error ? error.message : String(error);
   }
-  next.checkedAt = now;
+  next.checked_at = nowSeconds();
   try { saveUpdateState(next, file); } catch {}
   return next;
 }

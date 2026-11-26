@@ -42,7 +42,7 @@ from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, c
                       trim_jsonl_archive, BRIEF_HEADING, to_pi_entries)
 from . import update as uc_update
 
-__version__ = "0.6.7"
+__version__ = "0.6.8"
 logger = logging.getLogger("plugins.ultracompress")
 
 PLUGIN_DIR = Path(__file__).resolve().parent

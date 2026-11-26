@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "ultracompress" / "update.py"
+ROOT = Path(__file__).resolve().parents[2]
+MODULE_PATH = ROOT / "hermes" / "ultracompress" / "update.py"
 SPEC = importlib.util.spec_from_file_location("uc_update", MODULE_PATH)
 UPDATE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(UPDATE)
@@ -20,13 +21,13 @@ class HermesUpdateTest(unittest.TestCase):
         self.path = Path(self.temp.name, "cache", "update.json")
 
     def test_version_comparison_and_stable_releases(self):
-        self.assertTrue(UPDATE.is_newer("0.6.8", UPDATE.VERSION))
-        self.assertFalse(UPDATE.is_newer("0.6.7", UPDATE.VERSION))
+        self.assertTrue(UPDATE.is_newer("0.6.9", UPDATE.VERSION))
+        self.assertFalse(UPDATE.is_newer("0.6.8", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("garbage", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("0.6.8-rc.1", UPDATE.VERSION))
-        release = UPDATE.parse_release(json.dumps({"tag_name": "v0.6.8", "draft": False,
+        release = UPDATE.parse_release(json.dumps({"tag_name": "v0.6.9", "draft": False,
                                                    "prerelease": False, "body": "A\n\nB"}))
-        self.assertEqual(release, {"version": "0.6.8", "notes": "A\nB"})
+        self.assertEqual(release, {"version": "0.6.9", "notes": "A\nB"})
         with self.assertRaises(ValueError):
             UPDATE.parse_release(json.dumps({"tag_name": "v0.6.8", "prerelease": True}))
         with self.assertRaises(ValueError):
@@ -53,13 +54,13 @@ class HermesUpdateTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.path.parent.stat().st_mode), 0o700)
         calls = []
-        cached = UPDATE.run_check(state, self.path, lambda: calls.append(1) or {"version": "0.6.8", "notes": ""})
+        cached = UPDATE.run_check(state, self.path, lambda: calls.append(1) or {"version": "0.6.9", "notes": ""})
         self.assertEqual(calls, [])
         self.assertEqual(cached["last_error"], "upstream unavailable")
         self.assertTrue(UPDATE.check_due(cached, cached["checked_at"] + UPDATE.CHECK_INTERVAL + 1))
 
     def test_notice_frequency_skip_and_report(self):
-        release = {"version": "0.6.8", "notes": "notes"}
+        release = {"version": "0.6.9", "notes": "notes"}
         state = dict(UPDATE.DEFAULT_STATE)
         now = 1_700_000_000.0
         self.assertTrue(UPDATE.showable(state, release, UPDATE.VERSION, now))
@@ -68,9 +69,9 @@ class HermesUpdateTest(unittest.TestCase):
         self.assertTrue(UPDATE.showable(state, release, UPDATE.VERSION, now + UPDATE.CHECK_INTERVAL))
         UPDATE.skip(state, release["version"])
         self.assertFalse(UPDATE.showable(state, release, UPDATE.VERSION, now + UPDATE.CHECK_INTERVAL * 2))
-        self.assertTrue(UPDATE.showable(state, {"version": "0.6.9", "notes": ""}, UPDATE.VERSION, now))
+        self.assertTrue(UPDATE.showable(state, {"version": "0.7.0", "notes": ""}, UPDATE.VERSION, now))
         text = UPDATE.notice(release, UPDATE.VERSION)
-        self.assertIn(f"ultracompress 0.6.8 available (you have {UPDATE.VERSION})", text)
+        self.assertIn(f"ultracompress 0.6.9 available (you have {UPDATE.VERSION})", text)
         self.assertIn("update --auto on", text)
         self.assertIn("update --skip", text)
         self.assertNotIn("notes", text)
@@ -83,6 +84,55 @@ class HermesUpdateTest(unittest.TestCase):
             with self.subTest(env=env):
                 self.assertFalse(UPDATE.gate(env, interactive=True))
         self.assertFalse(UPDATE.gate({}, interactive=False))
+
+    def test_shared_cache_fixture_uses_seconds_and_one_file_name(self):
+        fixture = ROOT / "tests" / "fixtures" / "update-cache.json"
+        state = UPDATE.load_state(fixture)
+        self.assertEqual(UPDATE.CACHE_FILE, "update.json")
+        self.assertEqual(UPDATE.CHECK_INTERVAL, 86_400)
+        self.assertEqual(state["checked_at"], 1_700_000_000)
+        self.assertEqual(state["shown_at"], 1_700_000_000)
+        self.assertEqual(state["release"]["version"], "9.9.9")
+        self.assertFalse(UPDATE.check_due(state, 1_700_000_000 + UPDATE.CHECK_INTERVAL - 1))
+        self.assertTrue(UPDATE.check_due(state, 1_700_000_000 + UPDATE.CHECK_INTERVAL))
+
+    def test_legacy_pi_milliseconds_are_migrated_to_canonical_keys(self):
+        legacy = {
+            "checkedAt": 1_700_000_000_000,
+            "shownAt": 1_700_000_000_000,
+            "shownVersion": "9.9.9",
+            "release": {"version": "9.9.9", "notes": "notes"},
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        state = UPDATE.load_state(self.path)
+        self.assertEqual(state["checked_at"], 1_700_000_000)
+        self.assertFalse(UPDATE.check_due(state, 1_700_000_000 + UPDATE.CHECK_INTERVAL - 1))
+        UPDATE.save_state(state, self.path)
+        raw = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(raw["checked_at"], 1_700_000_000)
+        self.assertNotIn("checkedAt", raw)
+        self.assertEqual(set(raw), set(UPDATE.DEFAULT_STATE))
+
+    def test_cache_path_matches_the_other_adapters(self):
+        self.assertEqual(
+            UPDATE.cache_path(env={"XDG_CACHE_HOME": "/tmp/xdg"}, platform="linux",
+                              home=Path("/home/u")),
+            Path("/tmp/xdg/ultracompress/update.json"),
+        )
+        self.assertEqual(
+            UPDATE.cache_path(env={}, platform="darwin", home=Path("/Users/u")),
+            Path("/Users/u/Library/Caches/ultracompress/update.json"),
+        )
+        self.assertEqual(
+            UPDATE.cache_path(env={"LOCALAPPDATA": "C:/Cache"}, platform="win32",
+                              home=Path("C:/Users/u")),
+            Path("C:/Cache/ultracompress/update.json"),
+        )
+        self.assertEqual(
+            UPDATE.cache_path(env={}, platform="linux", home=Path("/home/u")),
+            Path("/home/u/.cache/ultracompress/update.json"),
+        )
 
     def test_manifest_and_runtime_versions_stay_aligned(self):
         adapter = MODULE_PATH.parent

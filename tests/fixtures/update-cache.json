@@ -1,0 +1,12 @@
+{
+  "checked_at": 1700000000,
+  "last_error": null,
+  "release": {
+    "version": "9.9.9",
+    "notes": "Shared cache fixture"
+  },
+  "skipped_version": null,
+  "shown_version": "9.9.9",
+  "shown_at": 1700000000,
+  "auto_attempted_version": null
+}
