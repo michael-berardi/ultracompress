@@ -230,6 +230,7 @@ Local files:
   snapshots in `<project>/.steak-pi/snaps/`. Snapshots can contain session text.
   Directories are `0700`, files `0600`, and at most the newest 20 snapshots within
   64 MiB are kept (the newest is kept even if one snapshot is larger).
+  The folder is inside your project, so add `.steak-pi/` to its `.gitignore`.
   Delete them with `rm -rf <project>/.steak-pi/snaps` and
   `rm ~/.pi/agent/ultracompress.json`.
 - Claude Code reads the local transcript and writes no files of its own; its

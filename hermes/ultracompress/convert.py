@@ -49,14 +49,16 @@ def trim_jsonl_archive(path: Path, max_bytes: int) -> int:
     size = len(data.encode("utf-8"))
     if size <= max_bytes:
         return size
-    lines = data.splitlines(keepends=True)
+    # Split on "\n" only: entries are JSON written with ensure_ascii=False, so they may hold
+    # U+2028 and similar characters that str.splitlines() would treat as line breaks.
+    lines = [line + "\n" for line in data.split("\n") if line]
     header = lines[:1] if lines and '"type": "session"' in lines[0] else []
     body = lines[len(header):]
     tail: List[str] = []
     kept = sum(len(line.encode("utf-8")) for line in header)
-    for line in reversed(body):
+    for index, line in enumerate(reversed(body)):
         n = len(line.encode("utf-8"))
-        if kept + n > max_bytes:
+        if index > 0 and kept + n > max_bytes:
             break
         tail.append(line)
         kept += n

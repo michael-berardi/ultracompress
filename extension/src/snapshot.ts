@@ -44,7 +44,10 @@ export function pruneSnaps(dir: string, maxFiles = MAX_SNAPS, maxBytes = MAX_SNA
   for (const name of fs.readdirSync(dir)) {
     if (!name.endsWith(".json")) continue;
     const file = path.join(dir, name);
-    const meta = readSnapMeta(file);
+    let meta: SnapMeta | null = null;
+    try {
+      meta = readSnapMeta(file);
+    } catch {}
     if (!meta) continue;
     try {
       candidates.push({ file, bytes: fs.statSync(file).size, createdAt: meta.createdAt });
@@ -119,7 +122,10 @@ export function writeSnapEntries(cwd: string, entries: unknown[], reason: string
     }
     writeAll(fd, "]}");
     fs.closeSync(fd);
-    pruneSnaps(dir);
+    // Retention is best effort: a prune failure must never cost the snapshot just written.
+    try {
+      pruneSnaps(dir);
+    } catch {}
     return meta;
   } catch (error) {
     try {
@@ -168,7 +174,9 @@ export function writeSnap(cwd: string, payload: string, fileName: string): strin
   try {
     fs.chmodSync(file, 0o600);
   } catch {}
-  pruneSnaps(dir);
+  try {
+    pruneSnaps(dir);
+  } catch {}
   return file;
 }
 

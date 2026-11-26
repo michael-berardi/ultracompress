@@ -41,6 +41,28 @@ class ArchivePrivacyTest(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(archive.stat().st_mode), 0o600)
             self.assertFalse(archive.with_name("session.jsonl.trim").exists())
 
+    def test_unicode_line_separators_never_split_an_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp, "session.jsonl")
+            entries = [{"id": f"m{i}", "text": "a\u2028b\u2029c\x85d" + "x" * 100} for i in range(4)]
+            archive.write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in entries), encoding="utf-8")
+            one = len((json.dumps(entries[0], ensure_ascii=False) + "\n").encode("utf-8"))
+            trim_jsonl_archive(archive, 2 * one)
+            lines = archive.read_text(encoding="utf-8").split("\n")
+            kept = [json.loads(line) for line in lines if line]
+            self.assertEqual([e["id"] for e in kept], ["m2", "m3"])
+
+    def test_newest_entry_is_kept_even_when_larger_than_the_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = Path(tmp, "session.jsonl")
+            header = {"type": "session", "version": 3, "id": "s"}
+            entries = [{"id": "old", "text": "x"}, {"id": "big", "text": "y" * 5000}]
+            archive.write_text("".join(json.dumps(x) + "\n" for x in [header, *entries]))
+            trim_jsonl_archive(archive, 200)
+            lines = [json.loads(line) for line in archive.read_text().splitlines()]
+            self.assertEqual(lines[0], header)
+            self.assertEqual([e["id"] for e in lines[1:]], ["big"])
+
     def test_archive_below_budget_is_untouched(self):
         with tempfile.TemporaryDirectory() as tmp:
             archive = Path(tmp, "session.jsonl")
