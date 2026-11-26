@@ -29,6 +29,8 @@ import logging
 import os
 import re
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -38,8 +40,9 @@ from agent.context_compressor import ContextCompressor
 from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, compose_brief,
                       conversation_view, find_binary, private_dir, section, tool_only_brief,
                       trim_jsonl_archive, BRIEF_HEADING, to_pi_entries)
+from . import update as uc_update
 
-__version__ = "0.6.0"
+__version__ = "0.6.7"
 logger = logging.getLogger("plugins.ultracompress")
 
 PLUGIN_DIR = Path(__file__).resolve().parent
@@ -55,6 +58,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "reply_chars": 1200,
     "replies_budget_chars": 12000,
     "carry_users_chars": 4000,
+    # Anonymous update checks are on in a live CLI session; installing is opt-in.
+    "updates": {"checkEnabled": True, "autoInstall": False, "autoAsked": False},
 }
 
 
@@ -66,6 +71,13 @@ def load_settings() -> Dict[str, Any]:
         pass
     except (OSError, ValueError) as exc:
         logger.warning("UltraCompress: ignoring unreadable %s (%s); using defaults", SETTINGS_FILE, exc)
+    raw_updates = settings.get("updates")
+    merged = dict(DEFAULT_SETTINGS["updates"])
+    if isinstance(raw_updates, dict):
+        for key in merged:
+            if isinstance(raw_updates.get(key), bool):
+                merged[key] = raw_updates[key]
+    settings["updates"] = merged
     return settings
 
 
@@ -212,6 +224,31 @@ class UltraCompressEngine(ContextCompressor):
                 os.chmod(new_path, 0o600)
         except Exception as exc:
             logger.warning("UltraCompress: could not carry the recall archive across session rotation (%s)", exc)
+        # Agent-host notice: background thread, only from a live CLI session.
+        if (self.uc_settings["updates"]["checkEnabled"]
+                and uc_update.gate(interactive=sys.stdout.isatty())):
+            threading.Thread(target=self._background_update, daemon=True).start()
+
+    def _background_update(self) -> None:
+        """One anonymous check in the background; no output inside agent turns."""
+        try:
+            state = uc_update.run_check(uc_update.load_state())
+            release = state.get("release")
+            if release and uc_update.showable(state, release, __version__):
+                logger.info("UltraCompress update available: %s — %s",
+                            release["version"], uc_update.notice(release, __version__).splitlines()[0])
+                uc_update.mark_shown(state, release["version"])
+                uc_update.save_state(state)
+                updates = self.uc_settings["updates"]
+                if (updates["autoInstall"] and not state.get("auto_attempted_version")
+                        and uc_update.is_newer(release["version"], __version__)):
+                    state["auto_attempted_version"] = release["version"]
+                    uc_update.save_state(state)
+                    # The CLI owns checksum verification and the persisted opt-in.
+                    subprocess.Popen([self._binary(), "update", "--auto", "on"],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as exc:
+            logger.debug("UltraCompress update check skipped (%s)", exc)
 
     def _archive(self, turns: List[Dict[str, Any]]) -> None:
         """Append condensed turns (Pi format, private file) so recall can find them. Never fatal."""
@@ -279,8 +316,17 @@ class UltraCompressEngine(ContextCompressor):
 
     def get_status(self) -> Dict[str, Any]:
         status = super().get_status()
+        state = uc_update.load_state()
+        release = state.get("release")
         status["ultracompress"] = {"version": __version__, "mode": self.uc_settings.get("mode"),
-                                   "last": self.last_uc_report}
+                                   "last": self.last_uc_report,
+                                   "updates": {
+                                       "checks": "on" if self.uc_settings["updates"]["checkEnabled"] else "off",
+                                       "autoInstall": "on" if self.uc_settings["updates"]["autoInstall"] else "off",
+                                       "available": release["version"] if release and uc_update.is_newer(
+                                           release["version"], __version__) else None,
+                                       "lastError": state.get("last_error"),
+                                   }}
         return status
 
 

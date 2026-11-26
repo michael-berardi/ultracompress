@@ -20,3 +20,6 @@ path = "src/main.rs"
 ultracompress-core = { path = "../ultracompress-core" }
 serde.workspace = true
 serde_json.workspace = true
+# The only network client in the tool: one anonymous release record per day.
+ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
+sha2.workspace = true

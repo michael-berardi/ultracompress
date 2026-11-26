@@ -10,12 +10,16 @@
 //!   ultracompress stats       per-role content breakdown of a session
 //!   ultracompress frames      render text to PNG frames (debugging / standalone use)
 //!   ultracompress version     print version
+//!   ultracompress update      check/install updates (--check, --skip, --auto, --rollback)
 //!
 //! Input: `--session FILE` (Pi session JSONL or Claude Code transcript) or
 //! stdin JSON `{ "entries": [...] }` (the extension contract). Output: JSON on
 //! stdout, diagnostics on stderr.
 
+mod update;
+
 use serde_json::{json, Value};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use ultracompress_core::compact::{run, CompactInput};
 use ultracompress_core::load::{load_session, read_stdin};
@@ -34,9 +38,26 @@ fn main() {
         die("usage: ultracompress <plan|compact|recall|stats|frames|version> [options]")
     });
 
+    let interactive = std::io::stdout().is_terminal() && std::io::stderr().is_terminal();
     match cmd {
         "version" | "--version" | "-V" => {
             println!("ultracompress {}", ultracompress_core::VERSION);
+        }
+        "update" => {
+            std::process::exit(update::command(
+                &args[1..],
+                ultracompress_core::VERSION,
+                interactive,
+            ));
+        }
+        // Hidden, detached workers: no output, no wait, same daily anonymous check.
+        "--update-check-background" => {
+            update::background_check(ultracompress_core::VERSION);
+            return;
+        }
+        "--update-auto-install" => {
+            update::background_auto_install(ultracompress_core::VERSION);
+            return;
         }
         "plan" => main_plan(&args[1..], true),
         "compact" => main_plan(&args[1..], false),
@@ -46,6 +67,8 @@ fn main() {
         "frames" => main_frames(&args[1..]),
         other => die(&format!("unknown command '{other}'")),
     }
+    // Notice/worker scheduling happens only after the command's JSON is out.
+    update::after_command(ultracompress_core::VERSION, interactive);
 }
 
 struct Cli {

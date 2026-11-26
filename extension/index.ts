@@ -1,8 +1,13 @@
+import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runUltraCompress } from "./src/bridge";
 import { writeDebug } from "./src/debug";
 import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
-import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
+import { loadSettings, resolveUltraCompressBin, saveSettings, type UltraCompressSettings } from "./src/settings";
+import {
+  checkReport, hostAllowed, isNewer, loadUpdateState, markShown,
+  notice as updateNotice, runCheck, saveUpdateState, showable,
+} from "./src/update";
 import { listSnaps, writeSnapEntries } from "./src/snapshot";
 import {
   applyTransforms,
@@ -41,16 +46,37 @@ import {
 
 const AUTO_CONTINUE_CUSTOM_TYPE = "ultracompress-auto-continue";
 /** Kept in sync with package.json by the repository privacy guard test. */
-const ADAPTER_VERSION = "0.6.0";
+const ADAPTER_VERSION = "0.6.7";
 
 export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();
   const ultracompressBin = resolveUltraCompressBin(settings);
   const transformCache = new Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>();
   const noGainCache = new Map<string, true>();
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event: unknown, ctx: any) => {
     transformCache.clear();
     noGainCache.clear();
+    // Agent-host update notice: background, at most daily, only with a live UI.
+    if (!ctx?.ui?.notify || !hostAllowed() || !settings.updates.checkEnabled) return;
+    void (async () => {
+      try {
+        let state = await runCheck(loadUpdateState());
+        if (state.release && showable(state, state.release, ADAPTER_VERSION)) {
+          await ctx.ui.notify(updateNotice(state.release, ADAPTER_VERSION), "info");
+          markShown(state, state.release.version);
+          saveUpdateState(state);
+          if (settings.updates.autoInstall && !state.autoAttemptedVersion &&
+              isNewer(state.release.version, ADAPTER_VERSION)) {
+            state.autoAttemptedVersion = state.release.version;
+            saveUpdateState(state);
+            // The CLI owns the checksum-verified install and its own opt-in config.
+            execFile(ultracompressBin, ["update", "--auto", "on"], () => {});
+          }
+        }
+        // A failed check stays in the cache with its cause; never printed as noise.
+        saveUpdateState(state);
+      } catch {}
+    })();
   });
   let lastCalibratedCpt: number | undefined;
   let visionKnown: boolean | null = null;
@@ -302,6 +328,51 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("ultracompress-update", {
+    description: "Check for a newer UltraCompress release (--check, --skip, --auto on|off|status)",
+    handler: async (args, ctx) => {
+      const mode = (args ?? "").trim();
+      if (!hostAllowed() || !settings.updates.checkEnabled) {
+        await ctx.ui.notify("Ultracompress update checks are disabled by config, environment or CI", "info");
+        return;
+      }
+      const state = loadUpdateState();
+      try {
+        if (mode === "--auto status") {
+          await ctx.ui.notify(`automatic updates: ${settings.updates.autoInstall ? "on" : "off"} · checks: ${settings.updates.checkEnabled ? "on" : "off"}`, "info");
+          return;
+        }
+        if (mode === "--auto on" || mode === "--auto off") {
+          settings.updates.autoInstall = mode.endsWith(" on");
+          settings.updates.autoAsked = true;
+          saveSettings(settings);
+          execFile(ultracompressBin, ["update", "--auto", mode.endsWith(" on") ? "on" : "off"], () => {});
+          await ctx.ui.notify(`automatic updates: ${settings.updates.autoInstall ? "on" : "off"}`, "info");
+          return;
+        }
+        if (mode === "--skip") {
+          const checked = await runCheck(state);
+          if (checked.release) {
+            checked.skippedVersion = checked.release.version;
+            saveUpdateState(checked);
+            await ctx.ui.notify(`Skipping notices for ${checked.release.version} until a newer release.`, "info");
+          } else {
+            await ctx.ui.notify(checkReport(null, checked.lastError), "info");
+          }
+          return;
+        }
+        if (mode === "--check" || mode === "") {
+          const checked = await runCheck(state);
+          await ctx.ui.notify(checkReport(checked.release, checked.lastError), "info");
+          return;
+        }
+        await ctx.ui.notify("usage: /ultracompress-update [--check|--skip|--auto on|off|status]", "warning");
+      } catch (error) {
+        await ctx.ui.notify(`UltraCompress update: ${String(error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("ultracompress-stats", {
     description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
@@ -312,6 +383,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         `snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
         `transforms cached: ${transformCache.size}`,
         `snapshots: ${listSnaps(process.cwd()).length} in .steak-pi/snaps`,
+        `updates: checks ${settings.updates.checkEnabled ? "on" : "off"} · automatic ${settings.updates.autoInstall ? "on" : "off"}`,
       ];
       await ctx.ui.notify(lines.join("\n"), "info");
     },

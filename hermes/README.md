@@ -71,6 +71,7 @@ Optional `settings.json` next to `__init__.py`:
 | `reply_chars` / `replies_budget_chars` | `1200` / `12000` | Size of each reply excerpt and of the whole replies section |
 | `carry_users_chars` | `4000` | Earlier windows' verbatim user quotes kept in later summaries |
 | `timeout_seconds` | `30` | Limit for one `ultracompress compact` run |
+| `updates` | `{"checkEnabled":true,"autoInstall":false,"autoAsked":false}` | Anonymous daily check (on in live CLI sessions); auto-install is opt-in |
 
 ## Fallback behaviour
 
@@ -115,7 +116,12 @@ running them, and give the run time to finish.
 
 ## Privacy
 
-This adapter runs the local binary; it sends no data itself and has no telemetry.
+This adapter runs the local binary; it sends no conversation data and has no telemetry.
+In a live CLI session it makes one anonymous release-record GET per 24 hours, with
+a four-second limit, and shows the notice in the session log and engine status.
+Set `ULTRACOMPRESS_NO_UPDATE_CHECK=1`, `CI=1`, or `updates.checkEnabled: false` in
+`settings.json` to turn it off; auto-install is opt-in via `updates.autoInstall`.
+See [Updates](../docs/updates.md).
 The raw recall archive is stored at `$HERMES_HOME/ultracompress/<session>.jsonl`,
 in a `0700` directory as a `0600` file, bounded to `archive_max_bytes` (64 MiB by
 default). Delete it with `rm -rf "$HERMES_HOME/ultracompress"`. Your model

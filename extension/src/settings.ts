@@ -20,6 +20,8 @@ export interface UltraCompressSettings {
   ultracompressBin: string;
   snap: SnapSettings;
   snapshot: { enabled: boolean };
+  /** Update checks are on by default; installing is always opt-in. */
+  updates: { checkEnabled: boolean; autoInstall: boolean; autoAsked: boolean };
   debug: boolean;
 }
 
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: UltraCompressSettings = {
   ultracompressBin: "",
   snap: { enabled: true, minChars: 6000, placement: "nextUser", imageTokensPerFrame: null, providers: ["anthropic", "google"] },
   snapshot: { enabled: true },
+  updates: { checkEnabled: true, autoInstall: false, autoAsked: false },
   debug: false,
 };
 
@@ -69,6 +72,12 @@ export function mergeSettings(raw: unknown): UltraCompressSettings {
     const sn = obj.snapshot as Record<string, unknown>;
     if (typeof sn.enabled === "boolean") out.snapshot.enabled = sn.enabled;
   }
+  if (obj.updates && typeof obj.updates === "object") {
+    const up = obj.updates as Record<string, unknown>;
+    if (typeof up.checkEnabled === "boolean") out.updates.checkEnabled = up.checkEnabled;
+    if (typeof up.autoInstall === "boolean") out.updates.autoInstall = up.autoInstall;
+    if (typeof up.autoAsked === "boolean") out.updates.autoAsked = up.autoAsked;
+  }
   return out;
 }
 
@@ -86,6 +95,11 @@ function writeSettingsFile(settingsPath: string, settings: UltraCompressSettings
   try {
     fs.chmodSync(settingsPath, 0o600);
   } catch {}
+}
+
+/** Persist settings after an explicit user choice (auto-install opt-in). */
+export function saveSettings(settings: UltraCompressSettings, settingsPath = SETTINGS_PATH): void {
+  writeSettingsFile(settingsPath, settings);
 }
 
 /** Load settings, scaffolding the file with defaults on first run. */

@@ -14,10 +14,18 @@ RUNTIME_FILES = (
 )
 
 BANNED_PACKAGES = re.compile(
-    r"(?i)(reqwest|ureq|sentry|bugsnag|posthog|@segment/|segmentio|mixpanel|amplitude|"
+    r"(?i)(reqwest|sentry|bugsnag|posthog|@segment/|segmentio|mixpanel|amplitude|"
     r"datadog|opentelemetry|google-analytics|\bgtag\.js\b|googletagmanager|"
     r"firebase|plausible|heap\.io)"
 )
+
+# One HTTP client is allowed by the 2026-11-26 update contract, and only in the
+# CLI's update module and its manifests. Everything else stays banned.
+UPDATE_HTTP_PACKAGE = re.compile(r"(?i)\bureq\b")
+UPDATE_FILES = {
+    "Cargo.toml", "Cargo.lock", "crates/ultracompress-cli/Cargo.toml",
+    "crates/ultracompress-cli/src/update.rs",
+}
 
 BANNED_ENDPOINTS = re.compile(
     r"(?i)(sentry\.io|api\.segment\.io|api\.mixpanel\.com|app\.posthog\.com|"
@@ -25,6 +33,19 @@ BANNED_ENDPOINTS = re.compile(
     r"stats\.g\.doubleclick\.net|analytics\.google\.com|api\.heap\.io|"
     r"https?://[^\s\"')]+)"
 )
+
+# The only hosts allowed in the three update modules: the repo's own GitHub
+# metadata and its public releases API. No other URL may appear at runtime.
+UPDATE_ALLOWED_HOSTS = re.compile(
+    r"https://(?:api\.)?github\.com/[^\s\"'`)]*"
+)
+UPDATE_MODULES = {
+    "crates/ultracompress-core/src/update.rs",
+    "crates/ultracompress-cli/src/update.rs",
+    "extension/src/update.ts",
+    "extension/src/metadata.ts",
+    "hermes/ultracompress/update.py",
+}
 
 
 def _text(path: Path) -> str:
@@ -35,7 +56,12 @@ class PrivacyTest(unittest.TestCase):
     def test_no_telemetry_dependencies_in_manifests(self):
         for manifest in (ROOT / "Cargo.toml", ROOT / "Cargo.lock"):
             with self.subTest(manifest=manifest.name):
-                self.assertIsNone(BANNED_PACKAGES.search(_text(manifest)))
+                text = _text(manifest)
+                self.assertIsNone(BANNED_PACKAGES.search(text))
+                if manifest.name == "Cargo.lock":
+                    self.assertIsNotNone(UPDATE_HTTP_PACKAGE.search(text))
+        cli_manifest = _text(ROOT / "crates/ultracompress-cli/Cargo.toml")
+        self.assertIsNotNone(UPDATE_HTTP_PACKAGE.search(cli_manifest))
         package = json.loads(_text(ROOT / "extension" / "package.json"))
         declared = set(package.get("dependencies", {})) | set(package.get("devDependencies", {}))
         lock = json.loads(_text(ROOT / "extension" / "package-lock.json"))
@@ -46,11 +72,25 @@ class PrivacyTest(unittest.TestCase):
 
     def test_runtime_has_no_http_clients_or_telemetry_endpoints(self):
         for path in RUNTIME_FILES:
-            with self.subTest(path=str(path.relative_to(ROOT))):
+            rel = str(path.relative_to(ROOT))
+            with self.subTest(path=rel):
                 text = _text(path)
                 self.assertIsNone(BANNED_PACKAGES.search(text))
+                if rel not in UPDATE_FILES:
+                    self.assertIsNone(UPDATE_HTTP_PACKAGE.search(text))
+                if rel in UPDATE_MODULES:
+                    # Strip only the tool's own GitHub hosts; a different host stays visible.
+                    text = UPDATE_ALLOWED_HOSTS.sub("", text)
                 self.assertIsNone(BANNED_ENDPOINTS.search(text))
-                self.assertNotRegex(text, r"\b(std::net|TcpStream|urllib\.request|XMLHttpRequest|WebSocket)\b")
+                clients = r"\b(std::net|TcpStream|XMLHttpRequest|WebSocket)\b"
+                if rel != "hermes/ultracompress/update.py":
+                    clients += r"|\burllib\.request\b"
+                self.assertNotRegex(text, clients)
+                if rel == "crates/ultracompress-cli/src/update.rs":
+                    self.assertIn("USER_AGENT", text)
+                    self.assertNotRegex(text, r"(?i)(Authorization|api[_-]?key|client[_-]?secret)")
+                if rel == "crates/ultracompress-core/src/update.rs":
+                    self.assertIn('USER_AGENT: &str = "ultracompress-update-check"', text)
 
     def test_installers_verify_checksums_before_installing(self):
         sh = _text(ROOT / "scripts" / "install.sh")
@@ -83,6 +123,26 @@ class PrivacyTest(unittest.TestCase):
         self.assertNotIn("/tmp/ultracompress-debug.json", debug)
         self.assertIn("trim_jsonl_archive", hermes)
         self.assertIn("archive_max_bytes", _text(ROOT / "hermes" / "ultracompress" / "__init__.py"))
+
+    def test_update_contract_marker_and_docs(self):
+        docs = _text(ROOT / "docs" / "updates.md")
+        self.assertIn("<!-- update-contract: v1 -->", docs)
+        readme = _text(ROOT / "README.md")
+        self.assertIn("[Updates](docs/updates.md)", readme)
+        self.assertIn("## Privacy", readme)
+        changelog = _text(ROOT / "CHANGELOG.md")
+        self.assertIn("update contract", changelog.lower())
+
+    def test_all_component_versions_are_aligned(self):
+        import json
+        import re
+        workspace = re.search(r'(?m)^version = "([^"]+)"', _text(ROOT / "Cargo.toml")).group(1)
+        pi = json.loads(_text(ROOT / "extension" / "package.json"))["version"]
+        cc = json.loads(_text(ROOT / "claude-code/.claude-plugin/plugin.json"))["version"]
+        hermes = re.search(r'(?m)^version:\s*(\S+)', _text(ROOT / "hermes/ultracompress/plugin.yaml")).group(1)
+        runtime = re.search(r'__version__ = "([^"]+)"', _text(ROOT / "hermes/ultracompress/__init__.py")).group(1)
+        index = re.search(r'ADAPTER_VERSION = "([^"]+)"', _text(ROOT / "extension/index.ts")).group(1)
+        self.assertEqual({workspace, pi, cc, hermes, runtime, index}, {workspace})
 
     def test_pi_adapter_reports_its_package_version(self):
         package = _text(ROOT / "extension" / "package.json")

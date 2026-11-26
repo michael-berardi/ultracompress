@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.7 (2026-11-26) — Update contract v1
+
+CLI, core, Pi, Claude Code and Hermes adapters are all at 0.6.7.
+
+- Added anonymous update checks: one GitHub latest-release GET per 24 hours per
+  machine, four-second timeout, fixed user agent, no identifiers or usage data.
+  Checks are on by default in interactive use and off in CI, non-TTY and
+  headless/agent sessions; `ULTRACOMPRESS_NO_UPDATE_CHECK=1` and config switches
+  opt out. Failures are cached with their cause and shown by `update --check`.
+- Added `ultracompress update --check|--skip|--auto on|off|status|--rollback`,
+  a once-per-version notice, checksum-verified atomic installation with one
+  rollback copy, package-manager detection, and opt-in background installation.
+- Pi shows the notice at session start and adds `/ultracompress-update`; Hermes
+  reports it in engine status. Neither writes it into JSON output.
+- Added `docs/updates.md` with the `<!-- update-contract: v1 -->` marker, README
+  Privacy/Updates sections, and offline tests for versions, cache, gates,
+  notices, checksum refusal and rollback. Snapshot pruning and Hermes archive
+  bounds are unchanged.
+
 ## 0.6.6 (2026-11-26) — Privacy hardening and documentation
 
 CLI/core 0.6.6; Pi, Claude Code and Hermes adapters 0.6.0.

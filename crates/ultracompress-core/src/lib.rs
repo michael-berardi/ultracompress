@@ -16,5 +16,6 @@ pub mod sections;
 pub mod snap;
 pub mod transcript;
 pub mod transform;
+pub mod update;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.6.6**. Install a prebuilt binary:
+Current CLI release: **0.6.7**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.6`).
+(for example `0.6.7`).
 
 ### From source
 
@@ -58,6 +58,15 @@ Commands write JSON to stdout and errors to stderr. Compaction requires a safe
 cut before a user turn; it can reject a session that has too little history.
 `compact` and `stats` read Pi sessions. `recall` also reads Claude Code
 transcripts. Adapters provide JSON input for other conversation formats.
+
+## Updates
+
+Interactive use checks for a newer public release once per 24 hours. The check is
+anonymous and never appears in JSON output; auto-install is opt-in. See
+[Updates](docs/updates.md) for the commands (`ultracompress update --check`,
+`--skip`, `--auto on|off|status`, `--rollback`), the opt-out, and the privacy
+details. The current CLI version is **0.6.7**; all four adapters are aligned at
+0.6.7.
 
 ## Agent adapters
 
@@ -139,6 +148,7 @@ Regex is explicit via `--regex` / tool `regex:true`; the command also accepts
 | --- | --- |
 | `/ultracompress` | Compact now; accepts `keep:N` and `policy:auto\|vcc\|snap` |
 | `/ultracompress-recall <query>` | Current lineage only; `scope:all` adds branches in the same session; JSON options support an explicit other session |
+| `/ultracompress-update` | Check for a release (`--check`, `--skip`, `--auto on\|off\|status`) |
 | `/ultracompress-stats` | Show settings, policy, snapshots, and bridge status |
 | `/snaps` | Inspect pre-compaction snapshots |
 
@@ -164,6 +174,7 @@ The adapter creates `~/.pi/agent/ultracompress.json` with safe defaults:
     "providers": ["anthropic", "google"]
   },
   "snapshot": { "enabled": true },
+  "updates": { "checkEnabled": true, "autoInstall": false, "autoAsked": false },
   "debug": false
 }
 ```
@@ -208,10 +219,18 @@ scripts make provider calls and are not required for ordinary unit testing.
 
 ## Privacy
 
-The CLI sends nothing over the network. It reads the session file or stdin you
-give it, writes JSON to stdout and errors to stderr, and makes no update check.
-UltraCompress sends no telemetry, analytics, crash reports, unique install IDs
-or machine fingerprints. No dependency with its own telemetry is run by the tool.
+The CLI sends nothing over the network except one anonymous update check. It
+reads the session file or stdin you give it and writes JSON to stdout and errors
+to stderr; the check happens after your command, in the background, at most once
+per 24 hours, only in interactive use. It requests only this repository's public
+GitHub latest-release record with a fixed `ultracompress-update-check` user
+agent: no install id, version, usage, machine data, or credentials. There is no
+telemetry, analytics, crash reporting, unique install ID or machine fingerprint,
+and no dependency with its own telemetry is run by the tool. UltraCompress has
+no telemetry at all. Checks are off in
+CI, non-TTY and agent/headless sessions; set `ULTRACOMPRESS_NO_UPDATE_CHECK=1`
+or `updates.checkEnabled: false` to opt out. Automatic installation is opt-in.
+See [Updates](docs/updates.md).
 
 When **you** run an installer, it downloads the release archive and `SHA256SUMS`
 from GitHub over HTTPS, verifies the SHA-256 before installing, and sends no usage
@@ -240,6 +259,10 @@ Local files:
   `0700`, the file `0600`, and the newest whole entries within 64 MiB are kept.
   Set `archive_max_bytes` in the adapter's `settings.json` to change the budget.
   Delete the archive with `rm -rf "$HERMES_HOME/ultracompress"`.
+- Update state lives in the platform cache directory (`~/.cache/ultracompress/update.json`,
+  `~/Library/Caches/ultracompress` on macOS) as a `0600` file; the opt-in auto-install
+  setting lives in the platform config directory. Delete them with
+  `rm -rf ~/.cache/ultracompress ~/.config/ultracompress` (adjust for your platform).
 - With `debug: true`, Pi overwrites one diagnostics file at
   `~/.local/state/ultracompress/debug.json` (`$XDG_STATE_HOME` overrides the
   state root). It is `0600` in a `0700` directory and can contain a short summary
