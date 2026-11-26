@@ -163,6 +163,15 @@ describe("compaction result", () => {
     const payload = vi.mocked(runUltraCompress).mock.lastCall?.[2] as { policy: string; keepUserTurns: number };
     expect(payload.keepUserTurns).toBe(2);
   });
+
+  it("asks the core to fit the summary budget for automatic compaction only", async () => {
+    const hooks = register({ summaryMaxBytes: 4096 });
+    vi.mocked(runUltraCompress).mockResolvedValue(localResult());
+    await hooks.compact({ reason: "threshold", preparation: { tokensBefore: 10_000 }, branchEntries: [] }, { ui: { notify: vi.fn() } });
+    expect((vi.mocked(runUltraCompress).mock.lastCall?.[2] as { summaryMaxBytes?: number }).summaryMaxBytes).toBe(4096);
+    await hooks.compact({ customInstructions: "/ultracompress", preparation: { tokensBefore: 10_000 }, branchEntries: [] }, { ui: { notify: vi.fn() } });
+    expect("summaryMaxBytes" in (vi.mocked(runUltraCompress).mock.lastCall?.[2] as object)).toBe(false);
+  });
 });
 
 describe("debug log", () => {

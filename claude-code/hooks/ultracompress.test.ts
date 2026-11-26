@@ -638,6 +638,10 @@ test('a second compaction passes the earlier brief back as previousSummary, not 
   const out: any = await handleCompact($, { trigger: 'manual', messages }, async () => ({}));
   expect(payloads).toHaveLength(1);
   expect(payloads[0].previousSummary).toBe(brief);
+  // A manual compaction is never capped; an automatic one asks the binary to fit the budget.
+  expect('summaryMaxBytes' in payloads[0]).toBe(false);
+  await handleCompact($, { trigger: 'auto', messages }, async () => ({}));
+  expect(payloads[1].summaryMaxBytes).toBe(16384);
   // The brief message (m0) is not sent again as conversation; later ids keep their positions.
   expect(payloads[0].entries.some((en: any) => en.id === 'm0')).toBe(false);
   expect(payloads[0].entries[0].id).toBe('m1');

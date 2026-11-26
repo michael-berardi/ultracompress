@@ -42,6 +42,10 @@ pub struct CompactInput {
     /// Dry run: no frames are rendered, only the plan is computed.
     #[serde(default)]
     pub dry_run: bool,
+    /// Byte budget for the brief. When it is over, the oldest transcript
+    /// lines are dropped first; the newest lines and every section stay.
+    #[serde(default)]
+    pub summary_max_bytes: Option<usize>,
 }
 
 fn default_policy() -> Policy {
@@ -385,8 +389,28 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     }
     new_sections = merged;
 
-    let transcript = build_transcript(summarized, &tr_cfg);
-    let summary = render(&new_sections, &transcript, &archived, &[]);
+    let mut transcript = build_transcript(summarized, &tr_cfg);
+    let mut summary = render(&new_sections, &transcript, &archived, &[]);
+    // Fit the budget by dropping the oldest transcript lines. A cut at the
+    // end of the text (what a host does to an oversized brief) removes the
+    // newest lines, which are the ones the next turn needs.
+    if let Some(max) = input.summary_max_bytes {
+        while summary.len() > max && !transcript.lines.is_empty() {
+            let excess = summary.len() - max + 96;
+            let mut freed = 0;
+            let mut drop = 0;
+            for l in &transcript.lines {
+                if freed >= excess {
+                    break;
+                }
+                freed += l.line.len() + 1;
+                drop += 1;
+            }
+            transcript.lines.drain(..drop);
+            transcript.omitted_lines += drop;
+            summary = render(&new_sections, &transcript, &archived, &[]);
+        }
+    }
 
     // Token accounting. Snap frames are a live-path concern; compaction
     // savings come from the summary alone. The kept tail's savings via live
@@ -588,6 +612,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: false,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert_eq!(r.first_kept_entry_id, "e7");
@@ -615,6 +640,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert_eq!(r.first_kept_entry_id, "");
@@ -667,6 +693,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert_eq!(r.stats.snap_blocks, 0);
@@ -689,6 +716,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert!(
@@ -740,6 +768,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert!(
@@ -765,6 +794,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: dry,
+            summary_max_bytes: None,
         };
         let dry = run(&make(true)).unwrap();
         let full = run(&make(false)).unwrap();
@@ -816,6 +846,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert_eq!(r.details["budgetCut"], "oversized_tail");
@@ -843,10 +874,56 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         let goal = r.summary.split("\n\n").next().unwrap();
         assert_eq!(goal, "[Session Goal]\n- Ship the importer");
+    }
+
+    #[test]
+    fn summary_budget_drops_the_oldest_transcript_lines_first() {
+        let mut entries = vec![entry("u0", null_parent(), "user", "start the long task")];
+        let mut parent = "u0".to_string();
+        for i in 0..200 {
+            let id = format!("a{i}");
+            entries.push(entry(
+                &id,
+                &parent,
+                "assistant",
+                &format!("step {i:03} finished with a reasonably long status line"),
+            ));
+            parent = id;
+        }
+        entries.push(entry("u1", &parent, "user", "next"));
+        let make = |budget| CompactInput {
+            entries: entries.clone(),
+            tokens_before: None,
+            previous_summary: None,
+            policy: Policy::Vcc,
+            keep_user_turns: Some(1),
+            smart_keep_tail: false,
+            vision: VisionMode::Off,
+            model_vision: None,
+            snap: None,
+            transcript: None,
+            image_tokens_per_frame: None,
+            dry_run: true,
+            summary_max_bytes: budget,
+        };
+        let full = run(&make(None)).unwrap();
+        assert!(full.summary.len() > 4_000);
+        let r = run(&make(Some(2_000))).unwrap();
+        assert!(r.summary.len() <= 2_000, "{}", r.summary.len());
+        // Sections and the newest lines survive; the oldest lines are gone.
+        assert!(r.summary.contains("[Session Goal]\n- start the long task"));
+        assert!(r.summary.contains("step 199 finished"));
+        assert!(!r.summary.contains("step 081 finished"));
+        assert!(r.summary.contains("earlier lines omitted"));
+        assert!(
+            r.details["transcriptOmitted"].as_u64().unwrap()
+                > full.details["transcriptOmitted"].as_u64().unwrap()
+        );
     }
 
     #[test]
@@ -871,6 +948,7 @@ mod tests {
             transcript: None,
             image_tokens_per_frame: None,
             dry_run: true,
+            summary_max_bytes: None,
         };
         let r = run(&input).unwrap();
         assert!(r.summary.len() < huge.len());

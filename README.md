@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.7.0**. Install a prebuilt binary:
+Current CLI release: **0.7.1**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.7.0`).
+(for example `0.7.1`).
 
 ### From source
 
@@ -179,8 +179,10 @@ The adapter creates `~/.pi/agent/ultracompress.json` with safe defaults:
 ```
 
 Pre-compaction snapshots are pruned to the newest `maxCount` and to `maxAgeDays`.
-`summaryMaxBytes` caps the brief of an automatic compaction (1024 to 65536);
-an explicit `/ultracompress` is never capped. The brief is deterministic, so
+`summaryMaxBytes` is the size budget for the brief of an automatic compaction
+(1024 to 65536). The CLI fits it by dropping the oldest transcript lines, so
+the sections and the newest lines stay (`--summary-max-bytes` on the command
+line). An explicit `/ultracompress` is never capped. The brief is deterministic, so
 free-text compaction instructions are not used; the adapter says so once.
 
 Set `overrideDefaultCompaction` to `false` to retain Pi's core compaction.

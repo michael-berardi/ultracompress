@@ -386,6 +386,9 @@ export async function handleCompact($, e, next) {
       instructions: e.instructions,
       ...(earlier ? { previousSummary: earlier } : {}),
     });
+    // The binary fits the budget by dropping the oldest transcript lines; the
+    // cap applied to its output below is the safety net for an older binary.
+    if (trigger !== 'manual') base.summaryMaxBytes = SUMMARY_MAX_BYTES;
     // One deadline for the whole compaction, not one per attempt: a compaction
     // that has to retry must still release the session within Pi's 30s.
     const deadline = clock.now() + COMPACT_TIMEOUT_MS;

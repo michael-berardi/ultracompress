@@ -270,7 +270,13 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     }
     const rcArgs = ["compact", "--policy", stdin.policy, "--vision", stdin.vision as string];
     const res = await runUltraCompress<UltraCompressCompactResult>(ultracompressBin, rcArgs,
-      { ...stdin, imageTokensPerFrame: settings.snap.imageTokensPerFrame }, 30_000);
+      {
+        ...stdin,
+        imageTokensPerFrame: settings.snap.imageTokensPerFrame,
+        // The core fits the budget by dropping the oldest transcript lines;
+        // the cap below is only the safety net for an older binary.
+        ...(isExplicitUltraCompress ? {} : { summaryMaxBytes: settings.summaryMaxBytes }),
+      }, 30_000);
     if (!res.ok || !res.data) {
       // Never brick the session: fall through to Pi core compaction.
       dbg({ compactError: res.error, reason: ev.reason });

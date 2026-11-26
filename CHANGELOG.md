@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1 (2026-11-26) — The summary budget keeps the newest lines
+
+- `compact` takes a size budget for the brief (`--summary-max-bytes`, or
+  `summaryMaxBytes` on stdin) and fits it by dropping the oldest transcript
+  lines. Before, a brief over the host's limit was cut at the end, which
+  removed the newest transcript lines: the ones the next turn needs. On a
+  recorded 20 MB session the brief was 17,536 bytes against a 16,384 limit;
+  it is now 16,160 with every section and the last line intact.
+- Pi adapter 0.6.1 and Claude Code plugin 0.6.1 pass their budget to the CLI
+  for automatic compaction (the old end cut stays as a fallback for an older
+  binary). Explicit compaction is still never capped.
+
 ## 0.7.0 (2026-11-26) — Audit: image-aware cuts, better recall ranking, adapter fixes
 
 Measured on the same inputs before and after (0.6.5 against 0.7.0); method and

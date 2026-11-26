@@ -63,6 +63,7 @@ struct Cli {
     page: usize,
     per_page: usize,
     image_tokens: Option<u64>,
+    summary_max: Option<usize>,
     label: String,
     recall: RecallOptions,
 }
@@ -83,6 +84,7 @@ fn parse_cli(args: &[String]) -> Cli {
         page: 1,
         per_page: 5,
         image_tokens: None,
+        summary_max: None,
         label: "text".into(),
         recall: RecallOptions::default(),
     };
@@ -132,6 +134,9 @@ fn parse_cli(args: &[String]) -> Cli {
             "--rows" => c.rows = val(&mut i).parse().unwrap_or_else(|_| die("bad number")),
             "--image-tokens-per-frame" => {
                 c.image_tokens = Some(val(&mut i).parse().unwrap_or_else(|_| die("bad number")))
+            }
+            "--summary-max-bytes" => {
+                c.summary_max = Some(val(&mut i).parse().unwrap_or_else(|_| die("bad number")))
             }
             "--query" => c.query = Some(val(&mut i)),
             "--regex" => c.regex = true,
@@ -294,6 +299,11 @@ fn main_plan(args: &[String], dry: bool) {
         transcript: None,
         image_tokens_per_frame: cli.image_tokens,
         dry_run: dry,
+        // Below 1 KiB a brief cannot hold its own sections.
+        summary_max_bytes: cli
+            .summary_max
+            .or(stdin_setting(&settings, "summaryMaxBytes"))
+            .map(|n: usize| n.max(1024)),
     };
     let result = run(&input).unwrap_or_else(|e| die(&e));
     let mut out = serde_json::to_value(&result).unwrap_or_else(|e| die(&e.to_string()));
