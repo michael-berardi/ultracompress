@@ -53,6 +53,24 @@ describe("ultracompress snapshots (instant-snap compatible)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("prunes by size from the oldest end, never a newer snapshot first", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ultracompress-prune-"));
+    try {
+      const pad = "x".repeat(4000);
+      const files = [0, 1, 2].map((i) => {
+        const snap = buildSnap([{ type: "message", role: "user", text: pad }], `s${i}`, 1_700_000_000_000 + i * 1000);
+        return writeSnap(dir, snap.payload, snap.meta.file);
+      });
+      const each = statSync(files[2]).size;
+      // Budget fits the two newest snapshots but not all three.
+      pruneSnaps(join(dir, ".steak-pi", "snaps"), 20, each * 2 + 10);
+      const remaining = listSnaps(dir).map((m) => m.file).sort();
+      expect(remaining).toEqual([snapFileName(1_700_000_001_000), snapFileName(1_700_000_002_000)].sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("writeSnapEntries (streamed snapshots)", () => {

@@ -51,13 +51,16 @@ export function pruneSnaps(dir: string, maxFiles = MAX_SNAPS, maxBytes = MAX_SNA
     } catch {}
   }
   candidates.sort((a, b) => b.createdAt - a.createdAt || a.file.localeCompare(b.file));
-  let total = candidates.reduce((sum, c) => sum + c.bytes, 0);
+  // Walk newest first; keep each snapshot while the count and the bytes kept so far fit.
+  // The newest snapshot is always kept, even if one session alone exceeds maxBytes.
+  let kept = 0;
   for (const [index, c] of candidates.entries()) {
-    // The newest snapshot is always kept, even if one session alone exceeds maxBytes.
-    if (index === 0 || (index < maxFiles && total - c.bytes >= 0 && total <= maxBytes)) continue;
+    if (index === 0 || (index < maxFiles && kept + c.bytes <= maxBytes)) {
+      kept += c.bytes;
+      continue;
+    }
     try {
       fs.unlinkSync(c.file);
-      total -= c.bytes;
     } catch {}
   }
 }
