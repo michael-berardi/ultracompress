@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- Recorded the contract §4a rollback gap in `docs/updates.md`: the single `*.previous` binary is retained indefinitely with no first-run or seven-day cleanup and must be removed manually; `update --auto off` disables automatic installs but does not delete the rollback copy. No update behavior changed.
+
 ## 0.7.2 (2026-11-26) — Update install hardening
 
 All adapters are aligned at 0.7.2, above the published `v0.7.1` tag, so the

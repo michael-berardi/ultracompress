@@ -108,6 +108,19 @@ release version; staged downloads and unpacked trees are always cleaned up. Pack
 detected and are never overwritten: the command names the right manager
 command instead.
 
+### Known gap in contract §4a
+
+Contract §4a asks for a rollback copy to be deleted after the new version has
+run successfully once, and at the latest within seven days; it also asks
+`update --auto off` to clear saved auto state. This build does **not** implement
+that cleanup. Every successful swap keeps one `*.previous` binary beside the
+installed executable **indefinitely**: there is no first-successful-run check
+and no seven-day expiry. Delete that file manually when you no longer need it,
+or run `ultracompress update --rollback` to restore it first.
+`ultracompress update --auto off` writes `auto_install = false` to the config
+and stops future automatic installs, but it **does not delete the rollback
+copy** and does not start any timed cleanup.
+
 ## Compatibility notes
 
 The Rust core is a pure library: it owns the version comparison, cache,
