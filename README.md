@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.7.2**. Install a prebuilt binary:
+CLI version in this checkout: **0.8.1** (newest published release: `v0.8.0`). Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.7.2`).
+(use a published version, for example `0.8.0`).
 
 ### From source
 
@@ -65,9 +65,10 @@ Interactive use checks for a newer public release once per 24 hours. The check i
 anonymous and never appears in JSON output; auto-install is opt-in. See
 [Updates](docs/updates.md) for the commands (`ultracompress update --check`,
 `--skip`, `--auto on|off|status`, `--rollback`), the opt-out, and the privacy
-details. The current CLI version is **0.7.2**; all four adapters are aligned at
-0.7.2. The published `v0.7.1` tag is older, so this branch does not notify you
-about a release it has already superseded.
+details. The CLI and all four adapters in this checkout are aligned at **0.8.1**,
+above the published `v0.8.0` release, so the check does not announce a release
+this build has already superseded. There is no published `v0.8.1` release yet;
+the installer links above use the published `latest` assets.
 
 ## Agent adapters
 

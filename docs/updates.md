@@ -73,7 +73,7 @@ A notice appears at most once per 24 hours per version. Skipping a version
 hides that version only; a newer release notifies again. The notice reads:
 
 ```text
-ultracompress 0.7.3 available (you have 0.7.2) · run: ultracompress update
+ultracompress 0.8.2 available (you have 0.8.1) · run: ultracompress update
 turn on automatic updates: ultracompress update --auto on · skip: ultracompress update --skip
 ```
 

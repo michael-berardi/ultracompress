@@ -1,15 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 (2026-11-26) — Version alignment with the published v0.8.0
 
-### Documentation
-
+- Verified that origin has the annotated `v0.8.0` tag (commit `306b8d4`) and a
+  published, non-prerelease v0.8.0 release with installers and platform archives.
+  This branch was still at 0.7.2, which is older than that release, so the CLI,
+  core, Pi, Claude Code and Hermes manifests and constants are now aligned at
+  0.8.1. The anonymous update check no longer announces `v0.8.0` as a new
+  release this build has already superseded. No `v0.8.1` tag or release exists:
+  published download links stay on `latest/download`, and version-pinned
+  examples use the published `v0.8.0`.
 - Recorded the contract §4a rollback gap in `docs/updates.md`: the single `*.previous` binary is retained indefinitely with no first-run or seven-day cleanup and must be removed manually; `update --auto off` disables automatic installs but does not delete the rollback copy. No update behavior changed.
 
 ## 0.7.2 (2026-11-26) — Update install hardening
 
-All adapters are aligned at 0.7.2, above the published `v0.7.1` tag, so the
-release check no longer treats an already-superseded release as available.
+At the time, all adapters on this branch were aligned at 0.7.2, above the
+then-latest `v0.7.1` tag. Origin has since published `v0.8.0`; see 0.8.1 above
+for the current aligned version.
 
 - Fixed B5a: download, archive and unpacked staging under the shared cache are
   removed after both a successful and a failed install. Checksum verification,
