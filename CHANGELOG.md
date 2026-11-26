@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.1 (2026-11-26) — Commit subjects, named exceptions, sharper recall excerpts
+
+CLI and core 0.8.1; the adapters are unchanged.
+
+- **Commits.** A commit made with `-am`, `--message`, a heredoc message or a
+  multi-line message was listed as the raw command line (or cut mid-word). The
+  brief now lists the subject line for each of those forms.
+- **Key Facts** keep a line that names an exception (`TypeError: ...`,
+  `ValueError: ...`); it needed a numeric error code before.
+- **Recall excerpts** are placed on the rarest matched term. In a long log the
+  excerpt used to start at the first common word, so the line with the id you
+  searched for was often outside it. Ranking is unchanged (same hit rates).
+
 ## 0.8.0 (2026-11-26) — Update notice, verified self-update, private local storage
 
 CLI and core 0.8.0, Pi adapter 0.7.0, Hermes engine 0.6.1. The Claude Code

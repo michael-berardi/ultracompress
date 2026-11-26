@@ -325,3 +325,47 @@ fn ranking_prefers_full_term_coverage_over_one_repeated_term() {
     assert_eq!(r.hits[0].matched_terms.len(), 3);
     assert_eq!(r.hits[1].entry_id, "b");
 }
+
+#[test]
+fn excerpt_shows_the_rarest_matched_term() {
+    let dir = std::env::temp_dir().join(format!("uc-snip-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("s.jsonl");
+    let log: String = (0..400)
+        .map(|i| {
+            let gateway = if i == 311 {
+                "backup gateway b2"
+            } else {
+                "gateway a1"
+            };
+            format!("INFO  order {} settled via {gateway}\n", 7000 + i)
+        })
+        .collect();
+    let lines = [
+        r#"{"type":"session","id":"snip"}"#.to_string(),
+        serde_json::json!({"type":"message","id":"a","parentId":null,
+            "message":{"role":"user","content":"check the orders"}})
+        .to_string(),
+        serde_json::json!({"type":"message","id":"b","parentId":"a",
+            "message":{"role":"toolResult","content":[{"type":"text","text":log}]}})
+        .to_string(),
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    let r = search(
+        &path,
+        &RecallOptions {
+            query: "order 7311 gateway".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(r.hits[0].entry_id, "b");
+    assert!(
+        r.hits[0]
+            .snippet
+            .contains("order 7311 settled via backup gateway b2"),
+        "{}",
+        r.hits[0].snippet
+    );
+}

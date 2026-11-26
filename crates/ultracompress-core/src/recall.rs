@@ -282,15 +282,15 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
     let searched = rows.len();
     // One lowercase pass per message: term counts and the first match are
     // taken together, then document frequency follows from the counts.
-    let mut term_hits: Vec<Option<(Vec<usize>, usize)>> = Vec::new();
+    let mut term_hits: Vec<Option<(Vec<usize>, Vec<usize>)>> = Vec::new();
     let mut df: Vec<usize> = Vec::new();
     if let Matcher::Terms(ts) = &matcher {
         df = vec![0; ts.len()];
         term_hits.reserve(rows.len());
         for (_, _, t, _) in &rows {
             let l = fold(t);
-            let mut first = usize::MAX;
             let mut any = false;
+            let mut firsts = vec![usize::MAX; ts.len()];
             let counts: Vec<usize> = ts
                 .iter()
                 .enumerate()
@@ -298,7 +298,7 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
                     let mut n = 0;
                     for (pos, _) in l.match_indices(q.as_str()) {
                         if n == 0 {
-                            first = first.min(pos);
+                            firsts[qi] = pos;
                         }
                         n += 1;
                     }
@@ -309,15 +309,13 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
                     n
                 })
                 .collect();
-            term_hits.push(any.then(|| {
-                // ASCII text folds byte for byte; otherwise map the offset back.
-                let pos = if l.len() == t.len() && t.is_ascii() {
-                    first
-                } else {
-                    original_offset(t, first)
-                };
-                (counts, pos)
-            }));
+            if any && !(l.len() == t.len() && t.is_ascii()) {
+                // ASCII text folds byte for byte; otherwise map offsets back.
+                for pos in firsts.iter_mut().filter(|p| **p != usize::MAX) {
+                    *pos = original_offset(t, *pos);
+                }
+            }
+            term_hits.push(any.then_some((counts, firsts)));
         }
     }
     let avg_len =
@@ -338,9 +336,17 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
                 }
             }
             Matcher::Terms(ts) => {
-                let Some((counts, p)) = term_hits[row].take() else {
+                let Some((counts, firsts)) = term_hits[row].take() else {
                     continue;
                 };
+                // Show the excerpt around the rarest matched term (fewest
+                // messages, then fewest repeats here): in a long log the
+                // common words match at the top, the specific one (an id, a
+                // code) is the line the caller is looking for.
+                let p = (0..ts.len())
+                    .filter(|&qi| counts[qi] > 0)
+                    .min_by_key(|&qi| (df[qi], counts[qi], firsts[qi]))
+                    .map_or(0, |qi| firsts[qi]);
                 let mut score = 0.;
                 let mut mt = Vec::new();
                 for (qi, q) in ts.iter().enumerate() {

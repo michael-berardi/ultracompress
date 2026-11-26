@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.8.0**. Install a prebuilt binary:
+Current CLI release: **0.8.1**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run
 `ultracompress update` (see [Updates](#updates)) or the same line again. To remove, run `ultracompress update --clean`,
-then delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION` (for example `0.8.0`).
+then delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION` (for example `0.8.1`).
 
 ### From source
 

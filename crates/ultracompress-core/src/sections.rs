@@ -378,7 +378,7 @@ fn extract_key_facts(text: &str, tool_name: &str, is_error: bool) -> Vec<String>
                 continue;
             }
             let lower = l.to_lowercase();
-            if !is_diagnostic_line(&lower, strict) {
+            if !is_diagnostic_line(&lower, strict, named_error(l)) {
                 continue;
             }
             // Exact dedup inside one result: a repeated code must not spend the
@@ -489,11 +489,31 @@ fn severity_pos(lower: &str) -> Option<usize> {
         .min()
 }
 
-fn is_diagnostic_line(lower: &str, strict: bool) -> bool {
+/// Byte offset of an exception name that states what went wrong:
+/// `TypeError:`, `ValueError:`, `NullPointerException:`.
+fn named_error(l: &str) -> Option<usize> {
+    let mut start = 0;
+    for token in l.split(|c: char| !c.is_ascii_alphanumeric()) {
+        let end = start + token.len();
+        let named = ["Error", "Exception"].iter().any(|suffix| {
+            token.len() > suffix.len()
+                && token.ends_with(suffix)
+                && token.starts_with(|c: char| c.is_ascii_uppercase())
+        });
+        if named && l.as_bytes().get(end) == Some(&b':') {
+            return Some(start);
+        }
+        start = end + 1;
+    }
+    None
+}
+
+fn is_diagnostic_line(lower: &str, strict: bool, named: Option<usize>) -> bool {
     if strict && (lower.starts_with("//") || lower.starts_with("/*") || lower.starts_with('*')) {
         return false;
     }
-    let Some(sev_pos) = severity_pos(lower) else {
+    // A named exception is both the severity and the code.
+    let Some(sev_pos) = severity_pos(lower).or(named) else {
         return false;
     };
     // A successful source read quotes examples, not observed diagnostics.
@@ -502,10 +522,11 @@ fn is_diagnostic_line(lower: &str, strict: bool) -> bool {
     if strict && inside_quotes(lower, sev_pos) {
         return false;
     }
-    if !has_code_token(lower) {
+    if !has_code_token(lower) && named.is_none() {
         return false;
     }
     !strict
+        || named == Some(0)
         || starts_with_severity(lower)
         || has_location_prefix(lower, sev_pos)
         || starts_with_diagnostic_code(lower)
@@ -780,33 +801,98 @@ fn extract_outstanding(text: &str, is_error: bool) -> Option<String> {
     None
 }
 
+/// Commits made by a shell command, as `commit: <subject>`.
+///
+/// Handles chained commands (`git add -A && git commit -m "..."`), combined
+/// flags (`-am`), `--message`, and a message passed through a heredoc
+/// (`-m "$(cat <<'EOF' ...`). Only the subject line is kept.
 fn extract_commits(cmd: &str) -> Vec<String> {
-    // Detect `git commit` invocations anywhere in the command line (chained
-    // commands are common: `git add -A && git commit -m "..."`).
     let mut out = Vec::new();
-    let lower = cmd.to_lowercase();
-    if !lower.contains("git commit") {
-        return out;
-    }
-    for line in cmd.lines() {
-        let l = line.trim();
-        let ll = l.to_lowercase();
-        if !ll.contains("git commit") {
-            continue;
-        }
-        let msg = l
-            .split("-m")
-            .nth(1)
-            .map(|m| m.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
-            .unwrap_or_default();
-        let entry = if msg.is_empty() {
-            crate::model::truncate_chars(l, 120)
-        } else {
-            format!("commit: {msg}")
+    let mut from = 0;
+    while let Some(found) = cmd[from..].find("git commit") {
+        let start = from + found;
+        from = start + "git commit".len();
+        let rest = &cmd[from..];
+        let entry = match commit_subject(rest) {
+            Some(subject) if !subject.is_empty() => format!("commit: {subject}"),
+            _ => {
+                let line = cmd[start..].lines().next().unwrap_or("").trim();
+                truncate_chars(line, 120)
+            }
         };
         out.push(entry);
     }
     out
+}
+
+/// The subject of the commit whose arguments start at `args`.
+fn commit_subject(args: &str) -> Option<String> {
+    let bytes = args.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // The command ends at a separator or the end of its line.
+        match bytes[i] {
+            b'\n' | b';' | b'|' => return None,
+            b'&' if bytes.get(i + 1) == Some(&b'&') => return None,
+            b' ' | b'\t' => {
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        let end = args[i..]
+            .find(|c: char| c.is_whitespace())
+            .map_or(args.len(), |n| i + n);
+        let word = &args[i..end];
+        // `--message="two words"`: the value runs past the first space.
+        let value = if word.starts_with("--message=") {
+            Some(&args[i + "--message=".len()..])
+        } else if word == "--message"
+            || (word.starts_with('-')
+                && !word.starts_with("--")
+                && word.ends_with('m')
+                && word[1..].bytes().all(|c| c.is_ascii_alphabetic()))
+        {
+            Some(args[end..].trim_start_matches([' ', '\t']))
+        } else {
+            None
+        };
+        if let Some(v) = value {
+            return Some(message_subject(v));
+        }
+        i = end;
+    }
+    None
+}
+
+/// First line of a commit message given the text that follows the flag.
+fn message_subject(v: &str) -> String {
+    let body = match v.chars().next() {
+        Some(q @ ('"' | '\'')) => {
+            let inner = &v[1..];
+            // A heredoc passes the message on the following lines.
+            if inner.starts_with("$(cat <<") {
+                inner
+                    .lines()
+                    .skip(1)
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+            } else {
+                let close = inner
+                    .char_indices()
+                    .find(|&(k, c)| c == q && !inner[..k].ends_with('\\'))
+                    .map_or(inner.len(), |(k, _)| k);
+                &inner[..close]
+            }
+        }
+        // Unquoted: one word, without a command separator stuck to it.
+        _ => v
+            .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|'))
+            .next()
+            .unwrap_or(""),
+    };
+    let subject = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    truncate_chars(subject.trim(), 120)
 }
 
 #[cfg(test)]
@@ -1023,6 +1109,52 @@ mod tests {
             extract_key_facts("E-8341-DEPLOY fatal rollback initiated", "bash", false).len(),
             1
         );
+    }
+
+    #[test]
+    fn commit_subjects_from_every_common_form() {
+        let cases = [
+            (
+                "git commit -am 'fix(refunds): parse amounts'",
+                "commit: fix(refunds): parse amounts",
+            ),
+            (
+                "npm test && git commit -m \"ship it\" && git push",
+                "commit: ship it",
+            ),
+            ("git commit --message=\"long form\"", "commit: long form"),
+            ("git commit --message 'spaced form'", "commit: spaced form"),
+            (
+                "git commit -q -m \"subject line\n\nbody text\"",
+                "commit: subject line",
+            ),
+            (
+                "git commit -m \"$(cat <<'EOF'\nHeredoc subject\n\nBody.\nEOF\n)\"",
+                "commit: Heredoc subject",
+            ),
+            (
+                "git commit --amend --no-edit && ls -m",
+                "git commit --amend --no-edit && ls -m",
+            ),
+        ];
+        for (cmd, want) in cases {
+            assert_eq!(extract_commits(cmd), vec![want.to_string()], "{cmd}");
+        }
+        let two = extract_commits("git commit -m one; git add x && git commit -m two");
+        assert_eq!(two, vec!["commit: one", "commit: two"]);
+        assert!(extract_commits("git status").is_empty());
+    }
+
+    #[test]
+    fn named_exceptions_are_key_facts() {
+        let log = "2026-11-12T10:59:59 ERROR refund POST /refunds 500 TypeError: amount.toFixed is not a function";
+        assert_eq!(extract_key_facts(log, "bash", false), vec![log.to_string()]);
+        let py = "ValueError: invalid literal for int() with base 10: 'x'";
+        assert_eq!(extract_key_facts(py, "bash", false), vec![py.to_string()]);
+        // Source that mentions an exception is not an observed failure.
+        let src = "    throw new TypeError(\"TypeError: bad amount\");";
+        assert!(extract_key_facts(src, "read", false).is_empty());
+        assert!(extract_key_facts("see the Error: section of the docs", "bash", false).is_empty());
     }
 
     #[test]
