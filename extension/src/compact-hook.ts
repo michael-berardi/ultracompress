@@ -55,7 +55,7 @@ export interface UltraCompressCompactResult {
   stats: UltraCompressCompactStats;
 }
 
-/** /ultracompress args: `keep:N [prompt…]`, `policy:<p>`, bare prompt text. */
+/** /ultracompress args: `keep:N`, `policy:<p>`. Extra text is ignored (the brief is deterministic). */
 export function parseUltraCompressArgs(raw: string | undefined): { keep: number | null; policy: string | null; prompt: string } {
   const keepMatch = /(?:^|\s)keep:(\d+)(?=\s|$)/.exec(raw ?? "");
   const policyMatch = /(?:^|\s)policy:(auto|vcc|snap)(?=\s|$)/.exec(raw ?? "");
@@ -127,4 +127,15 @@ export function formatStatsLine(rc: UltraCompressCompactResult): string {
   ];
   if (s.smart_keep_adjusted) parts.push(`smart-keep → ${s.keep_user_turns_resolved}`);
   return parts.join(" · ");
+}
+
+/** Hard UTF-8 budget, with an explicit recovery route; raw history is untouched. */
+export function capSummary(summary: string, maxBytes: number): string {
+  const budget = Number.isFinite(maxBytes) ? Math.max(1024, Math.min(65536, Math.floor(maxBytes))) : 16384;
+  if (Buffer.byteLength(summary) <= budget) return summary;
+  const marker = "\n[Summary capped; use ultracompress_recall for omitted history.]";
+  const bytes = Buffer.from(summary);
+  let end = budget - Buffer.byteLength(marker);
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return bytes.subarray(0, end).toString("utf8") + marker;
 }

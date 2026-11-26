@@ -12,9 +12,10 @@
  *   /usr/local/bin/ultracompress
  *   argv   compact --policy <auto|vcc|snap> --vision <auto|on|off>
  *   stdin  { entries, tokensBefore?, previousSummary?, policy, keepUserTurns,
- *            smartKeepTail, vision, modelVision,
- *            snapMinChars }
+ *            smartKeepTail, vision, modelVision }
  *   stdout { summary, first_kept_entry_id, details, stats }
+ *   An empty first_kept_entry_id is the binary's compact-all: every entry was
+ *   summarized and nothing is kept.
  *
  * Recall contract: the binary reads Claude Code transcripts natively
  * (`recall --session <transcript.jsonl> --format claude`), so the recall tool
@@ -52,13 +53,28 @@ const COMPACT_DEFAULTS = {
   smartKeepTail: true,
   vision: 'auto',
   modelVision: null,
-  snapMinChars: 8192,
 };
 
-/** Pi's compaction bridge kills the child at 30s; $.process.run's default is also 30s. */
+/**
+ * Pi's compaction bridge kills the child at 30s. That is one budget for the
+ * whole compaction, shared by every attempt, not 30s per attempt.
+ */
 const COMPACT_TIMEOUT_MS = 30_000;
 
-/** Pi's recall bridge budget: complete result JSON byte cap (recallText). */
+/**
+ * Wall clock for the compaction budget, as a mutable object rather than a bare
+ * Date.now() call so a test can drive the shared budget without waiting 30s.
+ */
+export const clock = { now: () => Date.now() };
+
+/**
+ * A compact result is a summary plus small metadata. The engine's process API
+ * as used in this module exposes no output cap, so oversized stdout is refused
+ * before JSON.parse rather than buffered and parsed.
+ */
+const COMPACT_MAX_OUTPUT_CHARS = 1_048_576;
+
+/** Pi's recall bridge default budget: complete result JSON byte cap (recallText). */
 const RECALL_MAX_OUTPUT_BYTES = 12_000;
 
 /** Pi caps automatic compaction summaries at summaryMaxBytes (default 16384 UTF-8 bytes). */
@@ -84,7 +100,7 @@ const RECALL_TOOL = {
     properties: {
       query: { type: 'string', minLength: 1, maxLength: 512, description: 'Ranked keywords; use regex:true for an explicit regex.' },
       scope: { type: 'string', enum: ['lineage', 'all'], description: "Default: all — every branch of this one session, including history from before compaction. lineage = the current branch since the last compaction." },
-      sessionFile: { type: 'string', description: 'Explicit other-session JSONL path. Omit to search only this session; never scans the session archive.' },
+      sessionFile: { type: 'string', description: 'Explicit other-session JSONL path; must be an existing .jsonl file. Omit to search only this session; never scans the session archive.' },
       regex: { type: 'boolean', description: 'Interpret query as a regular expression. Default false.' },
       role: { type: 'string', enum: ['user', 'assistant', 'toolResult'], description: 'Restrict message role before ranking.' },
       toolName: { type: 'string', description: 'Restrict to results from this exact tool name.' },
@@ -163,6 +179,9 @@ export function toEntries(messages) {
       const parts = [];
       if (typeof m.text === 'string' && m.text) parts.push({ type: 'text', text: m.text });
       for (const u of uses) {
+        // A transcript can carry an empty slot where a tool use once was;
+        // skip it rather than throw the whole compaction away.
+        if (!u || typeof u !== 'object') continue;
         parts.push({
           type: 'toolCall',
           id: u.tool_use_id,
@@ -177,21 +196,45 @@ export function toEntries(messages) {
       if (parts.length) entries.push({ type: 'message', id, message: { role: 'user', content: parts } });
       const results = Array.isArray(m.toolResults) ? m.toolResults : [];
       results.forEach((r, j) => {
+        const result = r && typeof r === 'object' ? r : {};
         entries.push({
           type: 'message',
           id: `${id}:r${j}`,
           message: {
             role: 'toolResult',
-            toolCallId: r && r.tool_use_id,
-            toolName: r && r.tool_use_id && names.has(r.tool_use_id) ? names.get(r.tool_use_id) : '',
-            content: [{ type: 'text', text: r && typeof r.text === 'string' ? r.text : '' }],
-            isError: Boolean(r && r.isError),
+            toolCallId: result.tool_use_id,
+            toolName: result.tool_use_id && names.has(result.tool_use_id) ? names.get(result.tool_use_id) : '',
+            content: [{ type: 'text', text: typeof result.text === 'string' ? result.text : '' }],
+            isError: Boolean(result.isError),
           },
         });
       });
     }
   });
   return entries;
+}
+
+/**
+ * Characters one transcript row contributes to the live context: its text, its
+ * tool-use inputs and its tool results. Used to report a token estimate for the
+ * rows actually kept. Null slots and unserialisable inputs count as nothing.
+ */
+export function rowChars(m) {
+  if (!m || typeof m !== 'object') return 0;
+  let chars = typeof m.text === 'string' ? m.text.length : 0;
+  for (const u of Array.isArray(m.toolUses) ? m.toolUses : []) {
+    if (!u || typeof u !== 'object') continue;
+    if (typeof u.text === 'string') chars += u.text.length;
+    if (u.input !== undefined) {
+      try {
+        chars += JSON.stringify(u.input).length;
+      } catch {}
+    }
+  }
+  for (const r of Array.isArray(m.toolResults) ? m.toolResults : []) {
+    if (r && typeof r.text === 'string') chars += r.text.length;
+  }
+  return chars;
 }
 
 /** `/compact keep:2 policy:vcc rest…` -> { keep: 2, policy: 'vcc' } (Pi parseUltraCompressArgs). */
@@ -260,12 +303,36 @@ export function capSummaryUtf8(summary, maxBytes) {
   return new TextDecoder().decode(bytes.subarray(0, end)) + marker;
 }
 
+/** First words of the summary message this hook writes after a compaction. */
+const SUMMARY_HEADER_PREFIX = 'UltraCompress summary of the earlier conversation (';
+
+/**
+ * The brief a previous compaction left as the first message, or null. That
+ * message is this hook's own output, so it is passed back to the binary as the
+ * previous summary (its files, commits and key facts merge into the new brief)
+ * instead of being summarized again as if the user had typed it.
+ */
+export function previousBrief(messages) {
+  const first = Array.isArray(messages) ? messages[0] : undefined;
+  if (!first || first.role !== 'user' || typeof first.text !== 'string') return null;
+  if (!first.text.startsWith(SUMMARY_HEADER_PREFIX)) return null;
+  const split = first.text.indexOf('\n\n');
+  const body = split < 0 ? '' : first.text.slice(split + 2).trim();
+  return body || null;
+}
+
+/** Entries for the binary, without the earlier brief when it travels as previousSummary. */
+function entriesWithoutBrief(messages, hasBrief) {
+  const entries = toEntries(messages);
+  return hasBrief ? entries.filter((en) => en.id !== 'm0') : entries;
+}
+
 /** The compact stdin payload (binary contract), defaults per the Pi settings. */
 export function buildCompactStdin(messages, overrides) {
   const parsed = parseInstructions(overrides && overrides.instructions);
   const stdin = {
     ...COMPACT_DEFAULTS,
-    entries: toEntries(messages),
+    entries: entriesWithoutBrief(messages, typeof (overrides && overrides.previousSummary) === 'string'),
     policy: parsed.policy ?? COMPACT_DEFAULTS.policy,
     keepUserTurns: parsed.keep ?? COMPACT_DEFAULTS.keepUserTurns,
   };
@@ -308,15 +375,37 @@ export async function handleCompact($, e, next) {
     const messages = Array.isArray(e.messages) ? e.messages : [];
     if (!messages.length) return fail('no transcript messages to compact');
 
+    // One base payload for the whole compaction: the transcript is mapped to
+    // entries once and each attempt only swaps what it changes. A long session
+    // is megabytes of JSON, so re-deriving it per attempt is the most
+    // expensive thing this hook could do. The session.compact event carries
+    // trigger, messages and instructions only, so tokensBefore stays unset;
+    // the previous summary is read back from this hook's own first message.
+    const earlier = previousBrief(messages);
+    const base = buildCompactStdin(messages, {
+      instructions: e.instructions,
+      ...(earlier ? { previousSummary: earlier } : {}),
+    });
+    // One deadline for the whole compaction, not one per attempt: a compaction
+    // that has to retry must still release the session within Pi's 30s.
+    const deadline = clock.now() + COMPACT_TIMEOUT_MS;
     const run = async (overrides) => {
-      const stdin = { ...buildCompactStdin(messages, { instructions: e.instructions }), ...overrides };
+      const remaining = deadline - clock.now();
+      if (remaining <= 0) {
+        return { error: `UltraCompress exceeded its ${COMPACT_TIMEOUT_MS / 1000}s compaction budget` };
+      }
+      const stdin = { ...base, ...overrides };
       const res = await $.process.run([bin, 'compact', '--policy', stdin.policy, '--vision', stdin.vision], {
         stdin: JSON.stringify(stdin),
-        timeoutMs: COMPACT_TIMEOUT_MS,
+        timeoutMs: remaining,
       });
       if (res.exitCode !== 0) return { error: `UltraCompress exited ${res.exitCode}: ${excerpt(res.stderr, 300)}`, noCut: /no safe cut point/.test(res.stderr ?? '') };
+      const stdout = typeof res.stdout === 'string' ? res.stdout : '';
+      if (stdout.length > COMPACT_MAX_OUTPUT_CHARS) {
+        return { error: `UltraCompress output is ${stdout.length} chars, over the ${COMPACT_MAX_OUTPUT_CHARS}-char limit` };
+      }
       try {
-        return { rc: JSON.parse(res.stdout) };
+        return { rc: JSON.parse(stdout) };
       } catch (err) {
         return { error: `bad UltraCompress output: ${err}` };
       }
@@ -328,15 +417,21 @@ export async function handleCompact($, e, next) {
     let cut = -1;
     let reportedStats;
     if (!attempt.error) {
-      const keptIndex = firstKeptIndexFromId(attempt.rc && attempt.rc.first_kept_entry_id);
-      cut = keptIndex < 0 ? -1 : chooseCut(messages, keptIndex);
-      if (cut > keptIndex) {
-        // The binary summarized only the messages before its own cut. Moving
-        // the tail forward to a clean user message would drop everything in
-        // between (a tool result and any user text sent with it), so
-        // summarize exactly the messages before the clean cut instead.
-        reportedStats = attempt.rc && attempt.rc.stats;
-        attempt = await run({ entries: toEntries(messages.slice(0, cut)), keepUserTurns: 0 });
+      if (attempt.rc && attempt.rc.first_kept_entry_id === '') {
+        // Empty first_kept_entry_id is the binary's compact-all: it already
+        // summarized every entry, so nothing is kept and nothing is retried.
+        cut = messages.length;
+      } else {
+        const keptIndex = firstKeptIndexFromId(attempt.rc && attempt.rc.first_kept_entry_id);
+        cut = keptIndex < 0 ? -1 : chooseCut(messages, keptIndex);
+        if (cut > keptIndex) {
+          // The binary summarized only the messages before its own cut. Moving
+          // the tail forward to a clean user message would drop everything in
+          // between (a tool result and any user text sent with it), so
+          // summarize exactly the messages before the clean cut instead.
+          reportedStats = attempt.rc && attempt.rc.stats;
+          attempt = await run({ entries: entriesWithoutBrief(messages.slice(0, cut), Boolean(earlier)), keepUserTurns: 0 });
+        }
       }
     }
     if ((attempt.error && attempt.noCut) || (!attempt.error && cut < 0)) {
@@ -346,21 +441,36 @@ export async function handleCompact($, e, next) {
     }
     if (attempt.error) return fail(attempt.error);
     const rc = attempt.rc;
-    // Token estimates describe the whole conversation; a prefix-only rerun
-    // would understate them, so report the full run's estimates.
+    // The before-estimate describes the whole conversation; a prefix-only
+    // rerun would understate it, so keep the full run's figure.
     if (reportedStats && typeof reportedStats === 'object') rc.stats = reportedStats;
     const summary = rc && typeof rc.summary === 'string' ? rc.summary : '';
     if (!summary.trim()) return fail('empty summary');
     if (cut < 0) return fail(`no clean user-message cut at or after entry ${rc.first_kept_entry_id}`);
 
+    const kept = messages.slice(cut);
     const condensed = cut; // summarized = everything before the kept tail (not the kept count)
     const header =
-      `UltraCompress summary of the earlier conversation (${condensed} messages condensed; ` +
+      `${SUMMARY_HEADER_PREFIX}${condensed} messages condensed; ` +
       'recall archived detail with the ultracompress_recall tool)';
     const capped = trigger === 'manual' ? summary : capSummaryUtf8(summary, SUMMARY_MAX_BYTES);
+    const stats = rc.stats && typeof rc.stats === 'object' ? rc.stats : {};
+    // What the person keeps is this summary message plus the kept rows, so the
+    // after-estimate is counted from those. The binary's own figure describes
+    // its run's tail, which can be longer than the clean cut above.
+    const charsPerToken =
+      typeof stats.chars_per_token === 'number' && stats.chars_per_token > 0 ? stats.chars_per_token : 4;
+    const keptChars = header.length + 2 + capped.length + kept.reduce((n, m) => n + rowChars(m), 0);
+    const tokensBefore = typeof stats.tokens_before_est === 'number' ? stats.tokens_before_est : undefined;
+    const tokensAfter = Math.max(0, Math.round(keptChars / charsPerToken));
     // The transcript line is cleared with the compacted conversation, so
     // the result also shows as a toast the person actually sees.
-    const notice = formatCompactNotice(rc.stats);
+    const notice = formatCompactNotice({
+      ...stats,
+      tokens_before_est: tokensBefore,
+      tokens_after_est: tokensAfter,
+      kept_messages: kept.length,
+    });
     try {
       $.ui.log(notice);
     } catch {}
@@ -368,11 +478,10 @@ export async function handleCompact($, e, next) {
       $.ui.toast(notice, { timeoutMs: 8000 });
     } catch {}
     const result = {
-      messages: [{ role: 'user', text: `${header}\n\n${capped}`, toolUses: [] }, ...messages.slice(cut)],
+      messages: [{ role: 'user', text: `${header}\n\n${capped}`, toolUses: [] }, ...kept],
     };
-    const stats = rc.stats && typeof rc.stats === 'object' ? rc.stats : {};
-    if (typeof stats.tokens_before_est === 'number') result.tokensBefore = stats.tokens_before_est;
-    if (typeof stats.tokens_after_est === 'number') result.tokensAfter = stats.tokens_after_est;
+    if (tokensBefore !== undefined) result.tokensBefore = tokensBefore;
+    result.tokensAfter = tokensAfter;
     return result;
   } catch (err) {
     return fail(String((err && err.message) || err));
@@ -392,14 +501,22 @@ export function transcriptPathFor(configDir, home, cwd, sessionId) {
 
 /**
  * What the recall tool searches: an explicit transcript path, or this
- * session's own file, stat-checked as a regular file. Only one session is ever
- * opened — never the archive.
+ * session's own file. Either way it must stat as a regular `.jsonl` file, so a
+ * typo, a directory or some other file the model named fails with a readable
+ * reason instead of reaching the binary. Only one session is ever opened —
+ * never the archive.
  */
 export async function resolveTranscript($, explicit) {
   if (explicit !== undefined) {
     if (typeof explicit !== 'string' || !explicit.trim()) throw new Error('sessionFile must be a non-empty path');
-    if (explicit.length > 4096) throw new Error('sessionFile is too long');
-    return explicit;
+    const path = explicit.trim();
+    if (path.length > 4096) throw new Error('sessionFile is too long');
+    if (!path.endsWith('.jsonl')) throw new Error(`sessionFile must be a .jsonl transcript: ${path}`);
+    const explicitStat = await $.fs.stat(path).catch(() => undefined);
+    if (!explicitStat || explicitStat.kind !== 'file') {
+      throw new Error(`sessionFile is not a regular file: ${path}`);
+    }
+    return path;
   }
   const [id, cwd] = await Promise.all([$.session.id(), $.session.cwd()]);
   if (!id || !cwd) throw new Error('No session file available; supply an explicit sessionFile');
@@ -469,13 +586,25 @@ export function recallArgvFrom(params, transcript) {
   return args;
 }
 
-/** Pi recallText: JSON only, within the byte budget, never truncated silently. */
+/**
+ * Pi recallText: JSON only, within the caller's byte budget, never truncated
+ * silently. The binary already caps its result at --max-output-bytes, so the
+ * bridge honours the caller's number (clamped to the tool's own 1024..32000
+ * range) instead of a fixed one. The CLI ends its JSON with a newline that is
+ * not part of the result, and empty output is an empty result, not a budget
+ * failure.
+ */
 export function boundedRecallText(text, budget = RECALL_MAX_OUTPUT_BYTES) {
-  const bytes = new TextEncoder().encode(String(text ?? ''));
-  if (!bytes.length || bytes.length > budget) {
-    throw new Error('Recall bridge exceeded the output byte budget; request smaller excerpts');
+  const [minBudget, maxBudget] = RECALL_INT_BOUNDS.maxOutputBytes;
+  const body = String(text ?? '').replace(/\r?\n$/, '');
+  if (!body) return '';
+  const cap = Number.isFinite(budget)
+    ? Math.min(maxBudget, Math.max(minBudget, Math.floor(budget)))
+    : RECALL_MAX_OUTPUT_BYTES;
+  if (new TextEncoder().encode(body).length > cap) {
+    throw new Error(`Recall bridge exceeded the ${cap}-byte output budget; request smaller excerpts`);
   }
-  return String(text);
+  return body;
 }
 
 /** tool.call hook serving mcp__ultracompress__ultracompress_recall via the binary itself. */
@@ -497,7 +626,7 @@ export async function handleRecallCall($, e) {
     if (res.exitCode !== 0) {
       return { result: `UltraCompress recall failed: ${excerpt(res.stderr, 300) || `exit ${res.exitCode}`}` };
     }
-    return { result: boundedRecallText(res.stdout) };
+    return { result: boundedRecallText(res.stdout, params.maxOutputBytes) };
   } catch (err) {
     return { result: `UltraCompress recall failed: ${String((err && err.message) || err)}` };
   }

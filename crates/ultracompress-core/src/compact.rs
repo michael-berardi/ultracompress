@@ -8,7 +8,7 @@ use crate::estimate::{calibrate, tokens_from_chars};
 use crate::format::{merge, render, PreviousSummary};
 use crate::model::{parse_message, RcMessage};
 use crate::policy::{Policy, VisionMode};
-use crate::sections::{extract, Sections};
+use crate::sections::{extract_with, Sections};
 use crate::snap::SnapConfig;
 use crate::transcript::{build as build_transcript, TranscriptConfig};
 use serde::{Deserialize, Serialize};
@@ -125,25 +125,25 @@ pub fn collect_live(entries: &[serde_json::Value]) -> (Vec<RcMessage>, Vec<Strin
     let mut live: Vec<RcMessage> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
     if orphan {
-        let start = last_compaction_idx.unwrap() + 1;
-        for (id, _, m) in &parsed[start.min(parsed.len())..] {
+        let start = (last_compaction_idx.unwrap() + 1).min(parsed.len());
+        for (id, _, m) in parsed.into_iter().skip(start) {
             if let Some(m) = m {
-                live.push(m.clone());
-                ids.push(id.clone());
+                live.push(m);
+                ids.push(id);
             }
         }
     } else {
         let mut found = last_kept_id.is_empty();
-        for (id, ty, m) in &parsed {
-            if !found && id == &last_kept_id {
+        for (id, ty, m) in parsed {
+            if !found && id == last_kept_id {
                 found = true;
             }
             if !found || ty == "compaction" {
                 continue;
             }
             if let Some(m) = m {
-                live.push(m.clone());
-                ids.push(id.clone());
+                live.push(m);
+                ids.push(id);
             }
         }
     }
@@ -223,23 +223,19 @@ pub fn resolve_smart_keep(
     if requested.is_some() || !smart {
         return (base, false);
     }
-    let tail_chars = |k: usize| -> Option<usize> {
+    // Tail size in tokens, images included: a tail of screenshots is not tiny.
+    let tail_tokens = |k: usize| -> Option<u64> {
         let cut = resolve_cut(live, k, cpt)?;
         if cut.compact_all {
             return None;
         }
-        Some(
-            live[cut.first_kept_index..]
-                .iter()
-                .map(|m| m.total_chars())
-                .sum(),
-        )
+        Some(tokens_of(&live[cut.first_kept_index..], cpt))
     };
-    let base_chars = match tail_chars(base) {
+    let base_tokens = match tail_tokens(base) {
         Some(c) => c,
         None => return (base, false),
     };
-    if tokens_from_chars(base_chars, cpt) > min_tokens {
+    if base_tokens > min_tokens {
         return (base, false);
     }
     let total_user = live
@@ -248,8 +244,8 @@ pub fn resolve_smart_keep(
         .count();
     let mut selected = base;
     for k in (base + 1)..=total_user.max(base) {
-        match tail_chars(k) {
-            Some(c) if tokens_from_chars(c, cpt) <= max_tokens => selected = k,
+        match tail_tokens(k) {
+            Some(c) if c <= max_tokens => selected = k,
             _ => break,
         }
     }
@@ -269,7 +265,7 @@ fn find_budget_cut_index(live: &[RcMessage], max_tokens: u64, cpt: f64) -> Optio
     };
     let mut acc = 0u64;
     for i in (0..live.len()).rev() {
-        acc += tokens_from_chars(live[i].total_chars(), cpt);
+        acc += live[i].est_tokens(cpt);
         if acc >= max_tokens {
             // Snap forward off any toolResult to the next valid boundary.
             return boundary(i);
@@ -307,10 +303,7 @@ pub fn apply_tail_budget(
         }
         return (cut, None);
     }
-    let tail_tokens: u64 = live[cut.first_kept_index..]
-        .iter()
-        .map(|m| tokens_from_chars(m.total_chars(), cpt))
-        .sum();
+    let tail_tokens = tokens_of(&live[cut.first_kept_index..], cpt);
     if tail_tokens <= max_tokens * OVERSIZED_TAIL_FACTOR {
         return (cut, None);
     }
@@ -342,7 +335,13 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         .as_deref()
         .map(|s| s.len())
         .unwrap_or(0);
-    let est = calibrate(total_chars + prev_chars, input.tokens_before);
+    // The measured context size includes attached images; take their estimate
+    // out before deriving chars per token from the text that remains.
+    let image_tokens: u64 = live.iter().map(|m| m.image_tokens()).sum();
+    let est = calibrate(
+        total_chars + prev_chars,
+        input.tokens_before.map(|t| t.saturating_sub(image_tokens)),
+    );
     let cpt = est.chars_per_token;
 
     let (keep, smart_adjusted) = resolve_smart_keep(
@@ -371,11 +370,14 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     let summarized = &live[..cut.summarize_end];
 
     // Sections + transcript + merge + render.
-    let mut new_sections = extract(summarized);
     let prev = input
         .previous_summary
         .as_deref()
         .and_then(PreviousSummary::parse);
+    // Once a goal is recorded, the first user message of a later window is a
+    // follow-up, not a second mission statement.
+    let first_user_is_goal = !prev.as_ref().is_some_and(|p| !p.goal.is_empty());
+    let mut new_sections = extract_with(summarized, first_user_is_goal);
     let merged: Sections = merge(prev.as_ref(), &new_sections);
     let mut archived: Vec<String> = Vec::new();
     if let Some(p) = &prev {
@@ -389,12 +391,12 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     // Token accounting. Snap frames are a live-path concern; compaction
     // savings come from the summary alone. The kept tail's savings via live
     // transforms are reported separately by `ultracompress transform`.
-    let summarized_tokens = tokens_from_chars(total_chars_of(summarized), cpt);
+    let summarized_tokens = tokens_of(summarized, cpt);
     let summary_tokens = tokens_from_chars(summary.len(), cpt);
     let kept_tokens = if cut.compact_all {
         0
     } else {
-        tokens_from_chars(total_chars_of(&live[cut.first_kept_index..]), cpt)
+        tokens_of(&live[cut.first_kept_index..], cpt)
     };
     // The prior summary is part of the context being replaced, not free input.
     // Omitting it under-reported the baseline and could report false expansion.
@@ -416,6 +418,7 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
         "transcriptLines": transcript.lines.len(),
         "transcriptOmitted": transcript.omitted_lines,
         "budgetCut": budget_cut,
+        "imageTokensEst": image_tokens,
         "explicitKeep": explicit,
     });
 
@@ -442,8 +445,9 @@ pub fn run(input: &CompactInput) -> Result<CompactResult, String> {
     })
 }
 
-fn total_chars_of(msgs: &[RcMessage]) -> usize {
-    msgs.iter().map(|m| m.total_chars()).sum()
+/// Estimated tokens of a span: text at `cpt` plus attached images.
+fn tokens_of(msgs: &[RcMessage], cpt: f64) -> u64 {
+    msgs.iter().map(|m| m.est_tokens(cpt)).sum()
 }
 
 fn section_names(
@@ -767,6 +771,82 @@ mod tests {
         assert!(dry.dry_run && !full.dry_run);
         assert_eq!(dry.summary, full.summary, "compaction is deterministic");
         assert_eq!(dry.stats.savings_pct, full.stats.savings_pct);
+    }
+
+    fn image_entry(id: &str, parent: &str, width: u32, height: u32) -> serde_json::Value {
+        let mut head = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        head.extend_from_slice(&width.to_be_bytes());
+        head.extend_from_slice(&height.to_be_bytes());
+        json!({
+            "type": "message", "id": id, "parentId": parent,
+            "message": { "role": "toolResult", "toolCallId": "c", "toolName": "read", "content": [
+                { "type": "text", "text": "Read image file [image/png]" },
+                { "type": "image", "mimeType": "image/png", "data": crate::snap::base64_encode(&head) }
+            ] }
+        })
+    }
+
+    #[test]
+    fn screenshots_count_toward_the_kept_tail_budget() {
+        // One prompt, then 60 screenshot reads: almost no characters, but
+        // each image costs about 1.6k tokens in context.
+        let mut entries = vec![
+            entry("u0", null_parent(), "user", "old question"),
+            entry("a0", "u0", "assistant", "old answer"),
+            entry("u1", "a0", "user", "check every screenshot"),
+        ];
+        let mut parent = "u1".to_string();
+        for i in 0..60 {
+            let call = format!("c{i}");
+            entries.push(assistant_call(&call, &parent, &call));
+            let shot = format!("s{i}");
+            entries.push(image_entry(&shot, &call, 1500, 1000));
+            parent = shot;
+        }
+        let input = CompactInput {
+            entries,
+            tokens_before: None,
+            previous_summary: None,
+            policy: Policy::Auto,
+            keep_user_turns: None,
+            smart_keep_tail: true,
+            vision: VisionMode::Off,
+            model_vision: None,
+            snap: None,
+            transcript: None,
+            image_tokens_per_frame: None,
+            dry_run: true,
+        };
+        let r = run(&input).unwrap();
+        assert_eq!(r.details["budgetCut"], "oversized_tail");
+        assert_eq!(r.details["imageTokensEst"], 96_000);
+        // The kept tail fits the budget with images counted (it was 121
+        // messages and about 96k real tokens when only characters counted).
+        assert!(r.stats.kept_messages < 40, "{}", r.stats.kept_messages);
+        assert!(r.stats.tokens_after_est < 2 * MAX_SMART_TAIL_TOKENS);
+        assert!(r.stats.tokens_before_est > 90_000);
+    }
+
+    #[test]
+    fn a_later_window_does_not_add_a_second_goal() {
+        let prev = "[Session Goal]\n- Ship the importer";
+        let input = CompactInput {
+            entries: sample_entries(),
+            tokens_before: None,
+            previous_summary: Some(prev.into()),
+            policy: Policy::Vcc,
+            keep_user_turns: Some(1),
+            smart_keep_tail: false,
+            vision: VisionMode::Off,
+            model_vision: None,
+            snap: None,
+            transcript: None,
+            image_tokens_per_frame: None,
+            dry_run: true,
+        };
+        let r = run(&input).unwrap();
+        let goal = r.summary.split("\n\n").next().unwrap();
+        assert_eq!(goal, "[Session Goal]\n- Ship the importer");
     }
 
     #[test]

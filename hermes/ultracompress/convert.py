@@ -16,7 +16,24 @@ REPLIES_HEADING = "## Agent Replies (verbatim excerpts, newest first)"
 USERS_HEADING = "## User Messages (verbatim, newest first)"  # Hermes' own lean-mode section
 RECALL_TOOL = "ultracompress_recall"
 
-# Same lookup order as the Claude Code plugin; first regular file wins.
+# The brief keeps only the tool calls that carry a fact the next window needs: a file that was
+# written or edited, and a commit that was made. Harnesses name those operations differently, so
+# they are mapped to the CLI's edit/write/bash handling before they reach it.
+TOOL_NAME_ALIASES = {
+    "write_file": "write",
+    "patch": "edit",
+    "str_replace_editor": "edit",
+    "terminal": "bash",
+    "shell": "bash",
+    "execute": "bash",
+}
+WRITE_TOOL_NAMES = frozenset({"write", "write_file", "create_file", "make_file"})
+EDIT_TOOL_NAMES = frozenset({"edit", "patch", "apply_patch", "str_replace", "multi_edit"})
+SHELL_TOOL_NAMES = frozenset({"bash", "shell", "terminal", "execute", "run_command"})
+COMMIT_MARKER = "git commit"
+TOOL_ARGUMENT_CHARS = 400
+
+# Same lookup order as the Claude Code plugin; first executable regular file wins.
 BINARY_CANDIDATES = (
     "~/.local/bin/ultracompress",
     "~/.ultraterm/bin/ultracompress",
@@ -31,12 +48,15 @@ _UNTRUSTED_CLOSE = re.compile(r"\s*</untrusted_tool_result>\s*$", re.S)
 
 
 def find_binary(explicit: str = "", env: Optional[Dict[str, str]] = None) -> Optional[str]:
-    """Settings value, then $ULTRACOMPRESS_BIN, then the standard install locations."""
+    """Settings value, then $ULTRACOMPRESS_BIN, then the standard install locations.
+
+    The file must be executable: an interrupted download left without the bit would otherwise turn
+    every compaction and every recall into a permission error instead of a clean fallback."""
     env = os.environ if env is None else env
     for candidate in (explicit, env.get("ULTRACOMPRESS_BIN", ""), *BINARY_CANDIDATES):
         if candidate:
             path = Path(candidate).expanduser()
-            if path.is_file():
+            if path.is_file() and os.access(path, os.X_OK):
                 return str(path)
     return None
 
@@ -58,6 +78,79 @@ def unwrap_tool_text(text: str) -> str:
         return text
     stripped = _UNTRUSTED_PREAMBLE.sub("", stripped, count=1)
     return _UNTRUSTED_CLOSE.sub("", stripped, count=1)
+
+
+def canonical_tool_name(name: Any) -> str:
+    """The name a tool call carries into the brief (aliases mapped, otherwise unchanged)."""
+    text = str(name or "").strip()
+    return TOOL_NAME_ALIASES.get(text.lower(), text)
+
+
+def tool_arguments(tc: Dict[str, Any]) -> Dict[str, Any]:
+    """A tool call's arguments as a dict (harnesses store them as a JSON string)."""
+    fn = tc.get("function") if isinstance(tc.get("function"), dict) else tc
+    args = fn.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return {}
+    return args if isinstance(args, dict) else {}
+
+
+def _first_text(args: Dict[str, Any], keys: Iterable[str]) -> str:
+    for key in keys:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def retained_tool_call(tc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The toolCall block the brief keeps for one call, or None when it carries no file/commit fact.
+
+    A brief that forgets which files were written or edited, and which commits were made, leaves
+    the next window without that record: the CLI builds its sticky Files And Changes and Commits
+    sections from toolCall arguments, so those calls survive. Arguments are reduced to the path
+    (or to the commit command), and read-only calls and every tool result stay out of the brief."""
+    raw = (tc.get("function") or {}).get("name") if isinstance(tc.get("function"), dict) else None
+    name = canonical_tool_name(raw or tc.get("name"))
+    lower = name.lower()
+    if lower in WRITE_TOOL_NAMES or lower in EDIT_TOOL_NAMES:
+        path = _first_text(tool_arguments(tc),
+                           ("path", "file_path", "filePath", "filename", "file", "target"))
+        if not path:
+            return None
+        return _tool_call(tc, "write" if lower in WRITE_TOOL_NAMES else "edit",
+                          {"path": path[:TOOL_ARGUMENT_CHARS]})
+    if lower in SHELL_TOOL_NAMES:
+        command = _first_text(tool_arguments(tc), ("command", "cmd", "script", "input"))
+        if COMMIT_MARKER not in command.lower():
+            return None
+        return _tool_call(tc, "bash", {"command": command[:TOOL_ARGUMENT_CHARS]})
+    return None
+
+
+def _tool_call(tc: Dict[str, Any], name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """An OpenAI-shaped tool call carrying only the argument the brief needs."""
+    return {"id": tc.get("id"), "type": "function",
+            "function": {"name": name, "arguments": arguments}}
+
+
+def turn_chars(turns: Iterable[Dict[str, Any]]) -> int:
+    """Window size in characters, from message text and tool-call arguments.
+
+    The status line needs an estimate, not a second serialisation of the whole window."""
+    total = 0
+    for t in turns:
+        total += len(text_of(t.get("content")))
+        for tc in t.get("tool_calls") or []:
+            args = (tc.get("function") or {}).get("arguments") if isinstance(tc.get("function"), dict) else None
+            if isinstance(args, dict):
+                total += sum(len(str(v)) for v in args.values())
+            else:
+                total += len(args or "")
+    return total
 
 
 def to_pi_entries(messages: Iterable[Dict[str, Any]], id_prefix: str = "m") -> List[Dict[str, Any]]:
@@ -104,9 +197,11 @@ def conversation_view(turns: Iterable[Dict[str, Any]], tool_result_chars: int = 
     """The turns the brief is built from.
 
     An agent's decisions live in what the user and the agent said, not in raw tool JSON, so by
-    default tool results and tool-only steps are left out of the brief (the raw archive keeps them
-    for recall). tool_result_chars > 0 keeps that many characters of each tool result instead.
-    Earlier compaction handoffs are skipped: they reach the CLI as previousSummary."""
+    default tool results and read-only tool calls are left out of the brief (the raw archive keeps
+    them for recall). The calls that write or edit a file, and shell calls that commit, stay as
+    toolCall blocks with a reduced argument: without them the brief cannot record which files
+    changed or which commits landed. tool_result_chars > 0 keeps that many characters of each tool
+    result instead. Earlier compaction handoffs are skipped: they reach the CLI as previousSummary."""
     view: List[Dict[str, Any]] = []
     for t in turns:
         if is_carrier(t):
@@ -115,10 +210,17 @@ def conversation_view(turns: Iterable[Dict[str, Any]], tool_result_chars: int = 
         if role == "tool":
             if tool_result_chars > 0:
                 view.append({**t, "content": unwrap_tool_text(text_of(t.get("content")))[:tool_result_chars]})
-        elif role == "assistant" and t.get("tool_calls") and tool_result_chars <= 0:
-            text = text_of(t.get("content")).strip()
-            if text:
-                view.append({"role": "assistant", "content": text})
+        elif role == "assistant" and t.get("tool_calls"):
+            if tool_result_chars > 0:
+                view.append(t)
+                continue
+            calls = [c for c in (retained_tool_call(tc) for tc in t["tool_calls"]) if c]
+            text = text_of(t.get("content"))
+            if text.strip() or calls:
+                kept: Dict[str, Any] = {"role": "assistant", "content": text}
+                if calls:
+                    kept["tool_calls"] = calls
+                view.append(kept)
         else:
             view.append(t)
     return view
@@ -175,6 +277,25 @@ def carry_forward_users(summary: str, previous_summary: str, budget: int = 4000)
     return summary + "\n\n" + USERS_HEADING + "\n" + carried
 
 
+EMPTY_WINDOW_LINE = ("Condensed turns held no briefable text of their own; the earlier brief stands "
+                     "and the raw archive keeps the rest searchable.")
+BRIEF_INTRO = "Deterministic brief of the condensed turns"
+
+
+def _without_intro(previous_brief: str) -> str:
+    """A previous brief's body: compose_brief adds the heading and intro again."""
+    body = previous_brief.strip()
+    if body.startswith(BRIEF_INTRO):  # compose_brief adds the intro again
+        body = body.split("\n\n", 1)[1].strip() if "\n\n" in body else ""
+    return body
+
+
+def empty_window_brief(previous_brief: str = "") -> str:
+    """Brief for a window the CLI found nothing to say about: one local line, no model call."""
+    previous = _without_intro(previous_brief)
+    return f"{previous}\n\n{EMPTY_WINDOW_LINE}" if previous else EMPTY_WINDOW_LINE
+
+
 def tool_only_brief(turns: Iterable[Dict[str, Any]], previous_brief: str = "") -> str:
     """Brief for a window with tool steps only: the previous brief plus which tools ran, by count."""
     counts: Dict[str, int] = {}
@@ -184,13 +305,8 @@ def tool_only_brief(turns: Iterable[Dict[str, Any]], previous_brief: str = "") -
             counts[name] = counts.get(name, 0) + 1
     used = ", ".join(f"{n} ×{c}" if c > 1 else n for n, c in sorted(counts.items(), key=lambda kv: -kv[1]))
     line = f"Tool steps condensed with nothing said: {sum(counts.values())} call(s) ({used or 'none'})."
-    previous = previous_brief.strip()
-    if previous.startswith(BRIEF_INTRO):  # compose_brief adds the intro again
-        previous = previous.split("\n\n", 1)[1].strip() if "\n\n" in previous else ""
+    previous = _without_intro(previous_brief)
     return f"{previous}\n\n{line}" if previous else line
-
-
-BRIEF_INTRO = "Deterministic brief of the condensed turns"
 
 
 def compose_brief(brief: str) -> str:

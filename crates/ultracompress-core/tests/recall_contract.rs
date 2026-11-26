@@ -290,3 +290,38 @@ fn metadata_that_cannot_fit_errors_without_losing_page_members() {
     )
     .is_err());
 }
+
+#[test]
+fn ranking_prefers_full_term_coverage_over_one_repeated_term() {
+    let dir = std::env::temp_dir().join(format!("uc-rank-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("s.jsonl");
+    let row = |id: &str, parent: &str, text: &str| {
+        serde_json::json!({"type":"message","id":id,"parentId":parent,
+            "message":{"role":"toolResult","content":[{"type":"text","text":text}]}})
+        .to_string()
+    };
+    let noisy = "deploy ".repeat(400) + &"filler line of build output\n".repeat(300);
+    let lines = [
+        r#"{"type":"session","id":"rank"}"#.to_string(),
+        serde_json::json!({"type":"message","id":"a","parentId":null,
+            "message":{"role":"user","content":"start"}})
+        .to_string(),
+        row("b", "a", &noisy),
+        row("c", "b", "deploy failed: quota exceeded for worker upload"),
+        row("d", "c", "unrelated listing of files"),
+    ];
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    let r = search(
+        &path,
+        &RecallOptions {
+            query: "deploy quota exceeded".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(r.hits[0].entry_id, "c", "{:?}", r.hits);
+    assert_eq!(r.hits[0].matched_terms.len(), 3);
+    assert_eq!(r.hits[1].entry_id, "b");
+}

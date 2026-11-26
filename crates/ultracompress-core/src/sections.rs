@@ -36,17 +36,82 @@ const FACT_TAIL_BYTES: usize = FACT_SCAN_BYTES - FACT_HEAD_BYTES;
 /// dumps must not allocate.
 const FACT_LINE_MAX: usize = 240;
 
+/// What a tool call does, whatever the harness names the tool.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolKind {
+    Edit,
+    Write,
+    Read,
+    Shell,
+    Other,
+}
+
+/// Harnesses spell the same tools differently (`edit`, `Edit`, `patch`,
+/// `write_file`, `Bash`, `terminal`). Matching one spelling left the files
+/// and commits sections empty everywhere else.
+pub(crate) fn tool_kind(name: &str) -> ToolKind {
+    let n = name.trim().to_ascii_lowercase();
+    match n.as_str() {
+        "edit"
+        | "multiedit"
+        | "multi_edit"
+        | "notebookedit"
+        | "patch"
+        | "apply_patch"
+        | "str_replace"
+        | "str_replace_editor"
+        | "str_replace_based_edit_tool"
+        | "edit_file"
+        | "replace" => ToolKind::Edit,
+        "write" | "write_file" | "create_file" | "create" => ToolKind::Write,
+        "read" | "read_file" | "view" | "view_file" | "cat" | "readfile" | "read_file_content" => {
+            ToolKind::Read
+        }
+        "bash" | "shell" | "terminal" | "execute" | "exec" | "run_command" | "run_terminal_cmd"
+        | "execute_command" | "powershell" => ToolKind::Shell,
+        _ => ToolKind::Other,
+    }
+}
+
+/// Insert or refresh `path` so the list stays ordered oldest to newest touch.
+fn touch(list: &mut Vec<String>, path: String) {
+    if let Some(i) = list.iter().position(|p| *p == path) {
+        list.remove(i);
+    }
+    list.push(path);
+}
+
+/// Keep the newest `max` items of an oldest-to-newest list.
+pub(crate) fn keep_newest(list: &mut Vec<String>, max: usize) {
+    if list.len() > max {
+        list.drain(..list.len() - max);
+    }
+}
+
+fn is_image_path(p: &str) -> bool {
+    let l = p.to_ascii_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic"]
+        .iter()
+        .any(|ext| l.ends_with(ext))
+}
+
 pub fn extract(messages: &[RcMessage]) -> Sections {
+    extract_with(messages, true)
+}
+
+/// `first_user_is_goal` is false when an earlier brief already recorded the
+/// goal: the first user message of a later window is then an ordinary turn.
+pub fn extract_with(messages: &[RcMessage], first_user_is_goal: bool) -> Sections {
     let mut s = Sections::default();
-    let mut files_modified: BTreeSet<String> = BTreeSet::new();
-    let mut files_created: BTreeSet<String> = BTreeSet::new();
-    let mut files_read: BTreeSet<String> = BTreeSet::new();
+    let mut files_modified: Vec<String> = Vec::new();
+    let mut files_created: Vec<String> = Vec::new();
+    let mut files_read: Vec<String> = Vec::new();
     let mut seen_outstanding: BTreeSet<String> = BTreeSet::new();
     let mut seen_prefs: BTreeSet<String> = BTreeSet::new();
     let mut seen_facts: BTreeSet<String> = BTreeSet::new();
     let mut goal_scope_changes: Vec<String> = Vec::new();
 
-    let mut first_user_done = false;
+    let mut first_user_done = !first_user_is_goal;
     for m in messages {
         match m.role {
             crate::model::Role::User => {
@@ -87,31 +152,36 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
                         name, arguments, ..
                     } = b
                     {
-                        match name.as_str() {
-                            "edit" | "write" => {
-                                let path = arg_path(arguments);
-                                if let Some(p) = path {
-                                    if name == "write" {
-                                        files_created.insert(p);
-                                    } else {
-                                        files_modified.insert(p);
-                                    }
-                                }
-                            }
-                            "read" => {
+                        match tool_kind(name) {
+                            ToolKind::Edit => {
                                 if let Some(p) = arg_path(arguments) {
-                                    files_read.insert(p);
+                                    touch(&mut files_modified, p);
                                 }
                             }
-                            "bash" => {
-                                if let Some(cmd) = arguments.get("command").and_then(|c| c.as_str())
+                            ToolKind::Write => {
+                                if let Some(p) = arg_path(arguments) {
+                                    touch(&mut files_created, p);
+                                }
+                            }
+                            ToolKind::Read => {
+                                // Screenshots are evidence of a moment, not
+                                // files the work depends on.
+                                if let Some(p) = arg_path(arguments).filter(|p| !is_image_path(p)) {
+                                    touch(&mut files_read, p);
+                                }
+                            }
+                            ToolKind::Shell => {
+                                if let Some(cmd) = arguments
+                                    .get("command")
+                                    .or_else(|| arguments.get("cmd"))
+                                    .and_then(|c| c.as_str())
                                 {
                                     for c in extract_commits(cmd) {
                                         s.commits.push(c);
                                     }
                                 }
                             }
-                            _ => {}
+                            ToolKind::Other => {}
                         }
                     }
                 }
@@ -125,11 +195,12 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
                         ..
                     } = b
                     {
-                        if *is_error || looks_failed(text) {
-                            if let Some(o) = extract_outstanding(text) {
-                                if seen_outstanding.insert(normalize_pref(&o))
-                                    && s.outstanding.len() < MAX_OUTSTANDING
-                                {
+                        // A successful file read that mentions "error" is source
+                        // text, not a failure.
+                        let source = is_source_read(tool_name) && !*is_error;
+                        if !source && (*is_error || looks_failed(text)) {
+                            if let Some(o) = extract_outstanding(text, *is_error) {
+                                if seen_outstanding.insert(normalize_pref(&o)) {
                                     s.outstanding.push(o);
                                 }
                             }
@@ -156,15 +227,22 @@ pub fn extract(messages: &[RcMessage]) -> Sections {
     for sc in goal_scope_changes.into_iter().take(3) {
         s.goal.push(format!("[Scope change] {sc}"));
     }
-    s.files_modified = cap(files_modified.into_iter(), MAX_FILES);
-    s.files_created = cap(files_created.into_iter(), MAX_FILES);
-    s.files_read = cap(files_read.into_iter(), MAX_FILES);
+    // A file that was changed is already listed; "Read" is for context only.
+    files_read.retain(|p| !files_modified.contains(p) && !files_created.contains(p));
+    // Every list keeps its newest entries: the latest work is what the next
+    // turn needs, and an alphabetical or first-seen cut drops it.
+    keep_newest(&mut files_modified, MAX_FILES);
+    keep_newest(&mut files_created, MAX_FILES);
+    keep_newest(&mut files_read, MAX_FILES);
+    keep_newest(&mut s.outstanding, MAX_OUTSTANDING);
+    for list in [&mut files_modified, &mut files_created, &mut files_read] {
+        list.sort();
+    }
+    s.files_modified = files_modified;
+    s.files_created = files_created;
+    s.files_read = files_read;
     s.commits = s.commits.into_iter().rev().take(MAX_COMMITS).collect();
     s
-}
-
-fn cap<I: Iterator<Item = String>>(it: I, max: usize) -> Vec<String> {
-    it.take(max).collect()
 }
 
 fn arg_path(args: &serde_json::Value) -> Option<String> {
@@ -178,13 +256,16 @@ fn arg_path(args: &serde_json::Value) -> Option<String> {
 fn trim_common_prefix(p: &str) -> String {
     // Collapse noisy machine prefixes while keeping the project segment for
     // disambiguation: /Users/<name>/dev/<repo>/src/x.ts → repo/src/x.ts
-    if let Some(idx) = p.find("/dev/") {
+    // (`/dev/null` and other device paths are not a project folder.)
+    if let Some(idx) = p.find("/dev/").filter(|&i| i > 0) {
         return p[idx + 5..].to_string();
     }
     // Also collapse other absolute homes: /Users/<name>/... → rest
-    if let Some(rest) = p.strip_prefix("/Users/") {
-        if let Some(slash) = rest.find('/') {
-            return rest[slash + 1..].to_string();
+    for home in ["/Users/", "/home/"] {
+        if let Some(rest) = p.strip_prefix(home) {
+            if let Some(slash) = rest.find('/') {
+                return rest[slash + 1..].to_string();
+            }
         }
     }
     p.to_string()
@@ -255,6 +336,8 @@ fn looks_failed(text: &str) -> bool {
         || lower.contains("failed")
         || lower.contains("panic")
         || lower.contains("fatal")
+        || lower.contains("cannot ")
+        || lower.contains("err!")
 }
 
 /// Lines that state a diagnostic condition with a code or status token —
@@ -396,7 +479,8 @@ fn severity_pos(lower: &str) -> Option<usize> {
         .flat_map(|token| lower.match_indices(token))
         .filter(|(pos, token)| {
             let bytes = lower.as_bytes();
-            let is_path_or_word = |c| is_word_byte(c) || matches!(c, b'.' | b'/' | b'\\');
+            // A dash joins the word into an identifier (`cf-error-footer`).
+            let is_path_or_word = |c| is_word_byte(c) || matches!(c, b'.' | b'/' | b'\\' | b'-');
             (*pos == 0 || !is_path_or_word(bytes[*pos - 1]))
                 && (*pos + token.len() == bytes.len()
                     || !is_path_or_word(bytes[*pos + token.len()]))
@@ -507,8 +591,26 @@ fn has_code_token(lower: &str) -> bool {
         || has_letter_digit_code(lower)
 }
 
+/// One token shaped like `e-8341-deploy` or `auth-123-fail`: a letter
+/// prefix, a run of two or more digits and a label, joined by dashes. Counting
+/// dashes and digits anywhere on the line also matched dates, CSS classes
+/// and checklist prose.
 fn dashed_code(lower: &str) -> bool {
-    lower.matches('-').count() >= 2 && lower.chars().any(|c| c.is_ascii_digit())
+    lower
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .any(|token| {
+            let mut parts = token.split('-');
+            let Some(first) = parts.next() else {
+                return false;
+            };
+            let digits = parts.next().unwrap_or("");
+            let label = parts.next().unwrap_or("");
+            (1..=8).contains(&first.len())
+                && first.bytes().all(|c| c.is_ascii_alphabetic())
+                && digits.len() >= 2
+                && digits.bytes().all(|c| c.is_ascii_digit())
+                && !label.is_empty()
+        })
 }
 
 /// Letter-prefixed digit runs with word boundaries: `ts2304`, `e0432`,
@@ -564,15 +666,116 @@ fn inside_quotes(lower: &str, pos: usize) -> bool {
     dq % 2 == 1 || sq % 2 == 1 || bt % 2 == 1
 }
 
-fn extract_outstanding(text: &str) -> Option<String> {
+/// An errno-style token: `ENOENT`, `EACCES`, `ECONNREFUSED`.
+fn has_errno(l: &str) -> bool {
+    l.split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|t| t.len() >= 5 && t.starts_with('E') && t.bytes().all(|c| c.is_ascii_uppercase()))
+}
+
+/// Does this line state a failure, as tools print one? Accepted shapes: the
+/// line opens with the severity (`error ...`, `Fatal error: ...`,
+/// `cannot open ...`), the severity is marked (`error:`, `error[E0432]`,
+/// `ERR!`, `src/a.ts(3,5): error TS2304`), or it is shouted (`FAILED`,
+/// `ERROR`). A severity word inside a sentence or markup is prose.
+fn is_failure_line(l: &str) -> bool {
+    // Markup is page content; `157:text` is a numbered line of a searched file.
+    let digits = l.bytes().take_while(u8::is_ascii_digit).count();
+    if l.starts_with('<') || (digits > 0 && l.as_bytes().get(digits) == Some(&b':')) {
+        return false;
+    }
+    const WORDS: [&str; 7] = [
+        "error", "err!", "fatal", "panic", "panicked", "failed", "failure",
+    ];
+    let lower = l.to_ascii_lowercase();
+    let lb = lower.as_bytes();
+    if lower.starts_with("cannot ") || lower.starts_with("can't ") {
+        return true;
+    }
+    for w in WORDS {
+        for (pos, _) in lower.match_indices(w) {
+            let end = pos + w.len();
+            let before_ok = pos == 0 || !(is_word_byte(lb[pos - 1]) || lb[pos - 1] == b'-');
+            let after = lb.get(end).copied();
+            let after_ok = after.is_none_or(|c| !(is_word_byte(c) || c == b'-'));
+            if !before_ok || !after_ok {
+                continue;
+            }
+            // Opens the line (after list or log decoration).
+            let lead = lower[..pos].trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+            if lead.is_empty() || lead == "npm " {
+                return true;
+            }
+            // Marked as a diagnostic.
+            if matches!(w, "err!" | "panicked") || matches!(after, Some(b':' | b'[' | b'!')) {
+                return true;
+            }
+            // Follows a location: `file.rs:3:5: error`, `a.ts(3,5): error`.
+            let head = lower[..pos].trim_end();
+            if head.ends_with([':', ')', ']'])
+                && head.rsplit(char::is_whitespace).next().is_some_and(|t| {
+                    t.contains(['.', '/']) || t.bytes().any(|c| c.is_ascii_digit())
+                })
+            {
+                return true;
+            }
+            // Shouted.
+            let original = &l[pos..end];
+            if original.bytes().all(|c| !c.is_ascii_lowercase()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The line that states the failure. Words count only when they stand alone
+/// (`error:`, `FAILED`), so identifiers such as `errors` or `on_error` in a
+/// search result or listing are not reported as a problem. A result the tool
+/// itself flagged as failed falls back to the line naming the cause.
+fn extract_outstanding(text: &str, is_error: bool) -> Option<String> {
+    let mut candidates: Vec<&str> = Vec::new();
     for line in text.lines() {
         let l = line.trim();
-        let lower = l.to_lowercase();
-        if (lower.contains("error") || lower.contains("failed") || lower.contains("cannot"))
-            && l.len() >= 12
-        {
+        if l.len() < 12 {
+            continue;
+        }
+        // Length gate before lowercasing: one huge line must not allocate.
+        if l.len() > 4_000 {
+            continue;
+        }
+        if is_error && candidates.len() < 200 {
+            candidates.push(l);
+        }
+        if is_failure_line(l) {
             return Some(truncate_chars(l, 240));
         }
+    }
+    // The tool flagged a failure but printed no diagnostic: report the line
+    // that says what went wrong, never an arbitrary line of its output.
+    if is_error {
+        const CAUSES: [&str; 14] = [
+            "no such file",
+            "not found",
+            "denied",
+            "timed out",
+            "timeout",
+            "unable to",
+            "invalid",
+            "refused",
+            "aborted",
+            "not permitted",
+            "unknown option",
+            "unrecognized",
+            "missing",
+            "does not exist",
+        ];
+        return candidates
+            .into_iter()
+            .find(|l| {
+                let lower = l.to_ascii_lowercase();
+                CAUSES.iter().any(|c| lower.contains(c)) || has_errno(l)
+            })
+            .map(|l| truncate_chars(l, 240));
     }
     None
 }
@@ -683,6 +886,155 @@ mod tests {
         )];
         let s = extract(&msgs);
         assert!(!s.outstanding.is_empty());
+    }
+
+    fn call(name: &str, args: serde_json::Value) -> RcMessage {
+        msg(
+            Role::Assistant,
+            vec![Block::ToolCall {
+                id: "c".into(),
+                name: name.into(),
+                arguments: args,
+            }],
+        )
+    }
+
+    #[test]
+    fn tool_names_from_other_harnesses_are_recognised() {
+        let msgs = vec![
+            call(
+                "Edit",
+                serde_json::json!({"file_path": "/home/x/proj/a.ts"}),
+            ),
+            call("patch", serde_json::json!({"path": "b.py"})),
+            call("Write", serde_json::json!({"file_path": "c.md"})),
+            call("write_file", serde_json::json!({"path": "d.md"})),
+            call("Read", serde_json::json!({"file_path": "e.rs"})),
+            call(
+                "terminal",
+                serde_json::json!({"command": "git commit -m 'ship it'"}),
+            ),
+            call(
+                "Bash",
+                serde_json::json!({"command": "git commit -m \"second\""}),
+            ),
+        ];
+        let s = extract(&msgs);
+        assert_eq!(s.files_modified, vec!["b.py", "proj/a.ts"]);
+        assert_eq!(s.files_created, vec!["c.md", "d.md"]);
+        assert_eq!(s.files_read, vec!["e.rs"]);
+        assert_eq!(s.commits, vec!["commit: second", "commit: ship it"]);
+    }
+
+    #[test]
+    fn file_lists_keep_the_newest_and_skip_screenshots() {
+        let mut msgs: Vec<RcMessage> = (0..40)
+            .map(|i| {
+                call(
+                    "read",
+                    serde_json::json!({"path": format!("src/f{i:02}.rs")}),
+                )
+            })
+            .collect();
+        msgs.push(call(
+            "read",
+            serde_json::json!({"path": "/tmp/shots/a.PNG"}),
+        ));
+        msgs.push(call("edit", serde_json::json!({"path": "src/f39.rs"})));
+        let s = extract(&msgs);
+        assert_eq!(s.files_read.len(), MAX_FILES);
+        // Oldest reads fall off; the newest stay. The edited file is listed
+        // once, under Modified.
+        assert!(!s.files_read.contains(&"src/f00.rs".to_string()));
+        assert!(s.files_read.contains(&"src/f38.rs".to_string()));
+        assert!(!s.files_read.iter().any(|p| p.ends_with(".PNG")));
+        assert!(!s.files_read.contains(&"src/f39.rs".to_string()));
+        assert_eq!(s.files_modified, vec!["src/f39.rs"]);
+    }
+
+    #[test]
+    fn outstanding_ignores_identifiers_and_keeps_the_newest_failures() {
+        let grep = "src/i18n.ts:64:  send: string; errors: Record<string, string>;";
+        let s = extract(&[tool_result("bash", grep, false)]);
+        assert!(s.outstanding.is_empty(), "{:?}", s.outstanding);
+        // A successful source read is never a failure.
+        let s = extract(&[tool_result(
+            "read",
+            "throw new Error(\"request failed\");",
+            false,
+        )]);
+        assert!(s.outstanding.is_empty(), "{:?}", s.outstanding);
+        for prose in [
+            "<span class=\"cf-no-screenshot error\"></span>",
+            "Without a declaration this is an audit only: it never blocks a deploy, and no failure inside the audit can block it",
+            "Each item names the failure it prevents. Do all of them before any deploy.",
+            "4. CPU: limits.cpuMs set if any request can run past 30 s. Prevents: error 1102.",
+            "157:reports failure: automatic resume refuses instead of repeating",
+            "- A commit the log reader cannot account for never shrinks the verified range",
+        ] {
+            let s = extract(&[tool_result("bash", prose, false)]);
+            assert!(s.outstanding.is_empty(), "{:?}", s.outstanding);
+        }
+        for failure in [
+            "Fatal error: A session is already selected",
+            "src/a.ts(3,5): error TS2304: Cannot find name 'foo'",
+            "error[E0432]: unresolved import `foo`",
+            "npm ERR! code ELIFECYCLE",
+            "test result: FAILED. 3 passed; 1 failed",
+            "thread 'main' panicked at src/main.rs:4:5:",
+            "cannot open file 'x.txt' for reading",
+        ] {
+            let s = extract(&[tool_result("bash", failure, false)]);
+            assert_eq!(s.outstanding, vec![failure], "{failure}");
+        }
+        // A flagged failure with no diagnostic reports the line naming the cause.
+        let s = extract(&[tool_result(
+            "bash",
+            "app build 0 4\nENOENT: no such file or directory, access 'x.txt'",
+            true,
+        )]);
+        assert_eq!(
+            s.outstanding,
+            vec!["ENOENT: no such file or directory, access 'x.txt'"]
+        );
+        // Flagged, but nothing in the output names a cause: no invented line.
+        let s = extract(&[tool_result("bash", "deploy 0 70050bbebc1c\napp 0", true)]);
+        assert!(s.outstanding.is_empty(), "{:?}", s.outstanding);
+        let msgs: Vec<RcMessage> = (0..12)
+            .map(|i| tool_result("bash", &format!("error: step {i:02} failed"), false))
+            .collect();
+        let s = extract(&msgs);
+        assert_eq!(s.outstanding.len(), MAX_OUTSTANDING);
+        assert_eq!(s.outstanding[0], "error: step 04 failed");
+        assert_eq!(s.outstanding[7], "error: step 11 failed");
+    }
+
+    #[test]
+    fn markup_dates_and_checklists_are_not_key_facts() {
+        for line in [
+            "<div class=\"cf-error-footer cf-wrapper w-240 py-10\">",
+            "- [ ] Post-deploy: the cron-completion/1 line is ok; error counts fall.",
+            "2026-11-26 run-2 finished, 0 failed",
+            "8ce7d457 Guard docs: the failure set includes 403s (T-4632)",
+        ] {
+            assert!(extract_key_facts(line, "bash", false).is_empty(), "{line}");
+        }
+        assert_eq!(
+            extract_key_facts("E-8341-DEPLOY fatal rollback initiated", "bash", false).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_window_after_the_goal_is_recorded_adds_no_goal() {
+        let msgs = vec![msg(
+            Role::User,
+            vec![Block::Text {
+                text: "now check coverage".into(),
+            }],
+        )];
+        assert!(extract_with(&msgs, false).goal.is_empty());
+        assert_eq!(extract_with(&msgs, true).goal, vec!["now check coverage"]);
     }
 
     #[test]

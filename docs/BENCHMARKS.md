@@ -1,6 +1,53 @@
 # UltraCompress — Benchmarks
 
-## Diagnostic-retention gate (0.4.1 and 0.4.2)
+## 0.7.0 audit (2026-11-26): 0.6.5 against 0.7.0 on the same inputs
+
+The pass/fail gate was written before any change. Inputs are recorded private
+Pi sessions (not distributed); every figure is one run of the named script with
+both binaries.
+
+**Recall ranking** (`scripts/bench-recall.mjs`): sampled tool results from the
+compacted-away span, a four-word query built from each, and whether recall
+returns that exact entry. The cut and the samples are identical for both
+binaries (compaction by 0.6.5 in both rows).
+
+| Corpus | Samples | 0.6.5 hit@1 | 0.7.0 hit@1 | 0.6.5 hit@5 | 0.7.0 hit@5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 24 sessions, 1.5 to 40 MB (used to choose the formula) | 288 | 74.3% | 90.3% | 96.2% | 97.9% |
+| 18 sessions, 0.5 to 1.5 MB (held out, never tuned on) | 193 | 77.2% | 89.6% | 99.0% | 100.0% |
+
+**Size estimate with screenshots.** One recorded session, 337 messages, 133
+image blocks (56 MB of base64), 283,519 text characters. The provider reported
+187,250 tokens for its last request.
+
+| | 0.6.5 | 0.7.0 |
+| --- | ---: | ---: |
+| Estimated tokens before compaction | 74,840 | 196,773 |
+| Messages kept verbatim | 179 | 57 |
+| Estimated tokens after | 26,073 (images not counted) | 27,368 (images counted) |
+
+**Time and peak memory** (best of 3, Apple silicon, `/usr/bin/time -l`):
+
+| Command | Input | 0.6.5 | 0.7.0 |
+| --- | --- | ---: | ---: |
+| `compact --session` | 58 MB, screenshots | 40 ms, 129 MB | 20 ms, 37 MB |
+| `recall --session` | 58 MB | 20 ms, 73 MB | 20 ms, 17 MB |
+| `stats --session` | 58 MB | 20 ms, 129 MB | 20 ms, 44 MB |
+| `compact --session` | 20 MB, text | 50 ms, 61 MB | 30 ms, 32 MB |
+| `recall --session` | 20 MB | 20 ms, 33 MB | 20 ms, 15 MB |
+| `transform` (400 messages on stdin) | 20 MB session tail | 40 ms, 24 MB | 40 ms, 16 MB |
+
+**Footprint** (`scripts/bench-offline.mjs`, the 24-session corpus): average
+reduction of the next request's context 91.7% (0.6.5) and 91.8% (0.7.0). The
+script's estimate does not count images, so it does not show the screenshot
+change above.
+
+**Diagnostic gate** (`scripts/bench-diagnostics.mjs`): 30 of 30 intended codes
+kept and 0 false facts in both versions. The script also reports that other
+sections changed in six fixtures; that is the intended change to the
+failures section (a line must be shaped like a diagnostic).
+
+## Diagnostic-retention gate (0.4.1 and 0.4.2, historical)
 
 Matched deterministic fixtures compare the 0.4.0 CLI with 0.4.2 on identical
 inputs. This is a correctness regression gate, not a production accuracy or

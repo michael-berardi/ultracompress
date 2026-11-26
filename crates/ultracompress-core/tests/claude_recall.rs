@@ -21,6 +21,11 @@ fn opts(query: &str) -> RecallOptions {
     }
 }
 
+fn sorted_ids(r: &ultracompress_core::recall::RecallResult) -> Vec<String> {
+    let mut v: Vec<String> = r.hits.iter().map(|h| h.entry_id.clone()).collect();
+    v.sort();
+    v
+}
 fn ids(r: &ultracompress_core::recall::RecallResult) -> Vec<String> {
     r.hits.iter().map(|h| h.entry_id.clone()).collect()
 }
@@ -73,9 +78,12 @@ fn auto_detects_claude_transcripts_and_maps_messages() {
 fn tool_results_resolve_names_from_earlier_tool_uses() {
     let f = data("tool-pair.jsonl");
     let r = search(&f, &opts("HONEYDEW-RESULT")).unwrap();
-    assert_eq!(ids(&r), ["u2", "a2"]);
-    assert_eq!(r.hits[0].role, "toolResult");
-    assert!(r.hits[0].snippet.contains("[Read]"));
+    // Both one-line messages match; which ranks first is a length tie-break,
+    // so the contract is the set of hits and what each one carries.
+    assert_eq!(sorted_ids(&r), ["a2", "u2"]);
+    let result = r.hits.iter().find(|h| h.entry_id == "u2").unwrap();
+    assert_eq!(result.role, "toolResult");
+    assert!(result.snippet.contains("[Read]"));
     // tool-name filter hits the resolved result but not the assistant call
     let mut o = opts("HONEYDEW-RESULT");
     o.tool_name = Some("Read".into());
@@ -113,7 +121,7 @@ fn lineage_spans_compaction_via_logical_parent_and_keeps_pre_history() {
     assert_eq!(search(&f, &o).unwrap().searched_messages, 0);
     // the compact summary itself is a searchable user record
     let r = search(&f, &opts("PEAR-CELLAR")).unwrap();
-    assert_eq!(ids(&r), ["u2", "a2"]);
+    assert_eq!(sorted_ids(&r), ["a2", "u2"]);
     // all scope sees the same single session tree
     let mut o = opts("APPLE-ORCHARD");
     o.scope_all = true;

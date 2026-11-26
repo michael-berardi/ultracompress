@@ -4,7 +4,7 @@
 //! when they replace text that would otherwise sit in the live window.
 
 use crate::classify::Thresholds;
-use crate::model::{parse_messages, Block, RcMessage};
+use crate::model::{parse_message, Block, RcMessage};
 use crate::policy::{engine_mix, resolve_block, Policy, VisionMode};
 use crate::snap::{plan_snap, render_frames, SnapConfig, SnapResult};
 use serde::{Deserialize, Serialize};
@@ -82,7 +82,13 @@ pub struct TransformResult {
 const DEFAULT_CPT: f64 = 3.8;
 
 pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
-    let msgs: Vec<RcMessage> = parse_messages(&serde_json::Value::Array(input.messages.clone()));
+    // Parse in place: cloning the array first held every tool result twice.
+    let msgs: Vec<RcMessage> = input
+        .messages
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| parse_message(item, &format!("m{i}")))
+        .collect();
     let cpt = input.chars_per_token.unwrap_or(DEFAULT_CPT);
 
     let vision = input.vision.resolves(input.model_vision);
@@ -115,7 +121,14 @@ pub fn run(input: &TransformInput) -> Result<TransformResult, String> {
                 input.image_tokens_per_frame,
                 cpt,
             );
-            if engine == crate::classify::Engine::Snap {
+            if engine != crate::classify::Engine::Snap {
+                // Every examined block gets an answer, so a caller can
+                // remember it and never ask about the same text again.
+                no_gain.push(BlockPosition {
+                    message_index: mi,
+                    block_index: bi,
+                });
+            } else {
                 let plan = plan_snap(text, &snap_cfg, input.image_tokens_per_frame, cpt);
                 if !plan.worthwhile {
                     no_gain.push(BlockPosition {
@@ -244,5 +257,10 @@ mod tests {
         let r = run(&input).unwrap();
         assert_eq!(r.stats.snap_ops, 0);
         assert_eq!(r.ops.len(), 0);
+        // The block was examined and left as text: reported, so the caller
+        // can memoize the decision.
+        assert_eq!(r.stats.blocks_scanned, 1);
+        assert_eq!(r.no_gain.len(), 1);
+        assert_eq!(r.no_gain[0].message_index, 0);
     }
 }

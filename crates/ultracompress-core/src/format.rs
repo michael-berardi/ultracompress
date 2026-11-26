@@ -72,6 +72,16 @@ impl PreviousSummary {
     }
 }
 
+/// Caps for sticky sections after merging a previous brief. Per-window
+/// extraction is capped separately; without these a long session's brief
+/// grew by a full window of entries at every compaction.
+const MAX_MERGED_GOAL: usize = 6;
+const MAX_MERGED_FILES: usize = 48;
+const MAX_MERGED_READS: usize = 24;
+const MAX_MERGED_COMMITS: usize = 16;
+const MAX_MERGED_PREFERENCES: usize = 12;
+const MAX_MERGED_KEY_FACTS: usize = 20;
+
 fn dedup_push(out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>, item: String) {
     let key = item.to_lowercase();
     if seen.insert(key) {
@@ -132,6 +142,23 @@ pub fn merge(prev: Option<&PreviousSummary>, new: &Sections) -> Sections {
                 }
             }
             let _ = seen;
+            // Repeated compactions must not grow the brief without bound:
+            // each sticky list keeps its newest entries. The goal keeps the
+            // original mission plus the latest scope changes.
+            use crate::sections::keep_newest;
+            if out.goal.len() > MAX_MERGED_GOAL {
+                let tail = out.goal.split_off(out.goal.len() - (MAX_MERGED_GOAL - 1));
+                out.goal.truncate(1);
+                out.goal.extend(tail);
+            }
+            out.files_read
+                .retain(|f| !out.files_modified.contains(f) && !out.files_created.contains(f));
+            keep_newest(&mut out.files_modified, MAX_MERGED_FILES);
+            keep_newest(&mut out.files_created, MAX_MERGED_FILES);
+            keep_newest(&mut out.files_read, MAX_MERGED_READS);
+            keep_newest(&mut out.commits, MAX_MERGED_COMMITS);
+            keep_newest(&mut out.preferences, MAX_MERGED_PREFERENCES);
+            keep_newest(&mut out.key_facts, MAX_MERGED_KEY_FACTS);
             out
         }
     }
@@ -281,6 +308,42 @@ mod tests {
         );
         assert_eq!(m.commits, vec!["c1".to_string(), "c2".to_string()]);
         assert_eq!(m.outstanding, vec!["new error".to_string()]);
+    }
+
+    #[test]
+    fn repeated_merges_stay_bounded_and_keep_the_newest() {
+        let mut summary = String::new();
+        for round in 0..30 {
+            let new = Sections {
+                goal: vec![if round == 0 {
+                    "Original mission".to_string()
+                } else {
+                    format!("[Scope change] also do {round}")
+                }],
+                files_modified: (0..10).map(|i| format!("src/m{round}_{i}.rs")).collect(),
+                files_created: vec![],
+                files_read: (0..10).map(|i| format!("src/r{round}_{i}.rs")).collect(),
+                commits: vec![format!("commit: round {round}")],
+                outstanding: vec![],
+                preferences: vec![format!("Always check {round}")],
+                key_facts: vec![format!("error TS{round}000: fact")],
+            };
+            let prev = PreviousSummary::parse(&summary);
+            let merged = merge(prev.as_ref(), &new);
+            summary = render(&merged, &Transcript::default(), &[], &[]);
+        }
+        let p = PreviousSummary::parse(&summary).unwrap();
+        assert_eq!(p.goal.len(), MAX_MERGED_GOAL);
+        assert_eq!(p.goal[0], "Original mission");
+        assert_eq!(p.goal.last().unwrap(), "[Scope change] also do 29");
+        assert_eq!(p.files_modified.len(), MAX_MERGED_FILES);
+        assert!(p.files_modified.contains(&"src/m29_9.rs".to_string()));
+        assert!(!p.files_modified.contains(&"src/m0_0.rs".to_string()));
+        assert_eq!(p.files_read.len(), MAX_MERGED_READS);
+        assert_eq!(p.commits.len(), MAX_MERGED_COMMITS);
+        assert_eq!(p.preferences.len(), MAX_MERGED_PREFERENCES);
+        assert_eq!(p.key_facts.len(), MAX_MERGED_KEY_FACTS);
+        assert!(summary.len() < 6_000, "{}", summary.len());
     }
 
     #[test]

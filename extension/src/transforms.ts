@@ -11,7 +11,10 @@ export interface FrameOut {
   id: string;
   width: number;
   height: number;
-  pngBase64: string;
+  /** The core serializes snap frames as snake_case (`png_base64`). */
+  png_base64?: string;
+  /** Historical payload spelling; still accepted so older binaries keep working. */
+  pngBase64?: string;
 }
 
 export interface SnapOp {
@@ -116,18 +119,30 @@ export function snapTextReplacement(op: SnapOp): Array<Record<string, unknown>> 
   ];
 }
 
+/** Base64 PNG for one frame, or undefined when the payload carries no data. */
+export function frameData(f: FrameOut): string | undefined {
+  const data = f?.png_base64 ?? f?.pngBase64;
+  return typeof data === "string" && data.length > 0 ? data : undefined;
+}
+
 /** Image blocks for snap frames, with a caption. */
-export function snapFrameBlocks(op: SnapOp): Array<Record<string, unknown>> {
-  const blocks: Array<Record<string, unknown>> = [];
-  if (op.frames.length === 0) return blocks;
-  blocks.push({
-    type: "text",
-    text: `[ultracompress: archived tool output follows as image frame(s) — verbatim, read in order]`,
-  });
+export function snapFrameBlocks(op: SnapOp): Array<Record<string, unknown>> | null {
+  if (op.frames.length === 0) return null;
+  const images: Array<Record<string, unknown>> = [];
   for (const f of op.frames) {
-    blocks.push({ type: "image", data: f.pngBase64, mimeType: "image/png" });
+    // A frame without payload data would become an invalid image part and the
+    // archived middle would be unreachable: refuse the replacement instead.
+    const data = frameData(f);
+    if (data === undefined) return null;
+    images.push({ type: "image", data, mimeType: "image/png" });
   }
-  return blocks;
+  return [
+    {
+      type: "text",
+      text: `[ultracompress: archived tool output follows as image frame(s) — verbatim, read in order]`,
+    },
+    ...images,
+  ];
 }
 
 export interface ApplyResult {
@@ -159,17 +174,20 @@ export function applyTransforms(
       const entry = replacements.get(key);
       if (!entry) continue;
       const op = entry.op;
-      if (placement === "inline") {
-        const replacement = [...snapTextReplacement(op), ...snapFrameBlocks(op)];
-        content.splice(bi, 1, ...replacement);
-        bi += replacement.length - 1; // don't rescan inserted blocks
-      } else {
-        const replacement = snapTextReplacement(op);
-        content.splice(bi, 1, ...replacement);
-        bi += replacement.length - 1;
-        const userIndex = nextUserIndex(messages, mi);
-        pendingFrames.push({ userIndex, blocks: snapFrameBlocks(op) });
+      // No deliverable frames means the archived middle cannot reach the model;
+      // replacing the text anyway would lose the tool output silently.
+      const frames = snapFrameBlocks(op);
+      if (frames === null) continue;
+      let userIndex = -1;
+      if (placement === "nextUser") {
+        userIndex = nextUserIndex(messages, mi);
+        // No user message can carry the frames: leave this block untouched.
+        if (userIndex < 0) continue;
       }
+      const replacement = placement === "inline" ? [...snapTextReplacement(op), ...frames] : snapTextReplacement(op);
+      content.splice(bi, 1, ...replacement);
+      bi += replacement.length - 1; // don't rescan inserted blocks
+      if (placement === "nextUser") pendingFrames.push({ userIndex, blocks: frames });
       snapApplied++;
     }
   });

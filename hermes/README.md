@@ -4,7 +4,7 @@
 deterministic brief instead of a model-written summary, and a recall tool that still finds
 what was condensed.**
 
-[Install](#install) · [What it does](#what-it-does) · [Settings](#settings) · [Fallback](#fallback-behaviour) · [Measured](#measured) · [Uninstall](#uninstall)
+[Install](#install) · [What it does](#what-it-does) · [Settings](#settings) · [Recall tool](#recall-tool) · [Fallback](#fallback-behaviour) · [Measured](#measured) · [Uninstall](#uninstall)
 
 ---
 
@@ -21,13 +21,19 @@ it runs the `ultracompress` binary locally and inserts:
 
 Earlier windows carry forward through later compactions. Tool output stays out of the brief by
 default, since an agent's decisions live in the conversation, and goes to a private raw archive
-(`$HERMES_HOME/ultracompress/<session>.jsonl`). The `ultracompress_recall` tool searches that
-archive with ranked keywords or a regular expression. If Hermes rotates the session id at a
-compaction boundary, the archive follows it.
+(`$HERMES_HOME/ultracompress/<session>.jsonl`). Two kinds of tool call do survive into the brief,
+as names and paths only: a call that writes or edits a file (`write_file`, `patch`, `edit`,
+`write`, `str_replace_editor`) and a shell call whose command contains `git commit`. That is what
+lets the brief say which files changed and what was committed. Everything else — read-only calls,
+and every tool result — stays out. The `ultracompress_recall` tool searches the archive with
+ranked keywords or a regular expression, 10 hits to a page, and reports the total hit and page
+count so the agent can ask for the next page. If Hermes rotates the session id at a compaction
+boundary, the archive follows it.
 
 It also changes when compaction fires. Hermes raises the trigger to 75% of the window for any
 model under 512k tokens, because a model-written summary is slow and expensive to repeat. A local
-brief takes milliseconds, so this engine uses the threshold you set (30% by default).
+brief takes milliseconds, so this engine uses the threshold you set (30% by default, or Hermes'
+`compression.threshold` when the plugin setting is unset).
 
 ## Install
 
@@ -48,9 +54,10 @@ a new CLI session) to load it. When the engine is active, the agent log shows
 
 ### Where the binary is looked up
 
-First regular file wins: `binary` in settings, `$ULTRACOMPRESS_BIN`,
+First executable regular file wins: `binary` in settings, `$ULTRACOMPRESS_BIN`,
 `~/.local/bin/ultracompress`, `~/.ultraterm/bin/ultracompress`,
-`/opt/homebrew/bin/ultracompress`, `/usr/local/bin/ultracompress`.
+`/opt/homebrew/bin/ultracompress`, `/usr/local/bin/ultracompress`. A path without the executable
+bit is skipped rather than run.
 
 ## Settings
 
@@ -63,22 +70,33 @@ Optional `settings.json` next to `__init__.py`:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `deterministic` | `builtin` makes the engine behave exactly like Hermes' own compressor |
-| `threshold` | `0.30` | Compaction trigger as a fraction of the context window |
+| `threshold` | unset | Compaction trigger as a fraction of the context window. Unset means Hermes' `compression.threshold`, and 0.30 when that is unset too |
 | `binary` | `""` | Explicit path to `ultracompress` |
 | `archive_dir` | `""` | Raw archive location; empty means `$HERMES_HOME/ultracompress` |
 | `tool_result_chars` | `0` | Characters of each tool result to include in the brief (0 = none) |
 | `reply_chars` / `replies_budget_chars` | `1200` / `12000` | Size of each reply excerpt and of the whole replies section |
 | `carry_users_chars` | `4000` | Earlier windows' verbatim user quotes kept in later summaries |
-| `timeout_seconds` | `30` | Limit for one `ultracompress compact` run |
+| `timeout_seconds` | `30` | Limit for one `ultracompress compact` run, and for one `ultracompress_recall` call |
+
+## Recall tool
+
+`ultracompress_recall(query, page?, regex?, role?)` searches the raw archive. It asks the CLI for
+10 hits a page and adds a `result` line giving the total hits and the page count, so a caller that
+wants more than the first page passes `page`. A bad `page`, a missing query, a timeout or a CLI
+that cannot run all come back as `{"error": ...}` JSON rather than an exception.
 
 ## Fallback behaviour
 
-If the binary is missing, fails, times out, or returns nothing, the engine logs one line naming
-the cause and Hermes' built-in summary runs for that compaction. A failure never costs the
-session. Recall failures come back as readable tool results.
+The raw window is archived before the binary is called, so a missing, failing or timed-out binary
+costs the brief and never the history recall depends on. If the binary is missing, fails, times
+out, or returns nothing, the engine logs one line naming the cause and Hermes' built-in summary
+runs for that compaction. A failure never costs the session. Recall failures come back as readable
+tool results.
 
 A stretch made only of tool calls (nothing said by the user or the agent) is not a failure: the
 engine keeps the previous brief and adds one line naming the tools that ran, with no model call.
+If the binary succeeds but the window has no text of its own to summarise, the brief says so in one
+local line instead of falling back to a model summary.
 
 ## Measured
 
@@ -99,8 +117,13 @@ the next reply took 16 s instead of 107 s. One session and five questions is a s
 
 ```sh
 python3 -m unittest discover -s hermes/tests -v                 # standalone + CLI contract
+ULTRACOMPRESS_BIN=/path/to/uc python3 -m unittest discover -s hermes/tests -v   # pinned binary
 HERMES_AGENT_DIR=~/.hermes/hermes-agent <hermes python> -m unittest discover -s hermes/tests -v
 ```
+
+`$ULTRACOMPRESS_BIN` points the CLI-contract tests at a specific binary, which is how they run
+against a frozen build while the installed one is being rebuilt; without it they use the installed
+binary and skip when there is none.
 
 `<hermes python>` is the interpreter Hermes runs on, so its dependencies import. The
 integration tests load the adapter through Hermes' own plugin loader in a temporary

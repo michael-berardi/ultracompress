@@ -23,25 +23,49 @@ pub struct LoadedSession {
 /// last compaction boundary are included (they exist on disk and stay
 /// searchable — UltraCompress uses this for lossless recall).
 pub fn load_session(path: &Path, include_pre_compaction: bool) -> std::io::Result<LoadedSession> {
-    let raw = std::fs::read_to_string(path)?;
-    parse_session_str(&raw, include_pre_compaction)
+    use std::io::BufRead;
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::with_capacity(1 << 20, file);
+    let mut failed = None;
+    let lines = reader.lines().map_while(|l| match l {
+        Ok(l) => Some(l),
+        Err(e) => {
+            failed = Some(e);
+            None
+        }
+    });
+    let parsed = parse_session_lines(lines, include_pre_compaction);
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    parsed
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "unparseable session"))
 }
 
 pub fn parse_session_str(raw: &str, include_pre_compaction: bool) -> Option<LoadedSession> {
+    parse_session_lines(raw.lines(), include_pre_compaction)
+}
+
+/// Parse one line at a time so a session file is never held whole. Image
+/// payloads are cut to their header as they arrive.
+fn parse_session_lines<S: AsRef<str>>(
+    lines: impl Iterator<Item = S>,
+    include_pre_compaction: bool,
+) -> Option<LoadedSession> {
     let mut session_id = String::new();
     let mut cwd = String::new();
     let mut entries: Vec<(String, Option<String>, String, Value)> = Vec::new(); // (id, parent, type, value)
 
-    for line in raw.lines() {
-        let line = line.trim();
+    for line in lines {
+        let line = line.as_ref().trim();
         if line.is_empty() {
             continue;
         }
-        let v: Value = match serde_json::from_str(line) {
+        let mut v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => continue,
         };
+        crate::model::trim_image_payloads(&mut v);
         let obj = v.as_object()?;
         match obj.get("type").and_then(|t| t.as_str()) {
             Some("session") => {

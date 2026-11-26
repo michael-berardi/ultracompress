@@ -31,17 +31,13 @@ pub fn load_with_format(path: &Path, format: RecallFormat) -> Result<RecallFile,
         .unwrap_or("session")
         .to_string();
     match format {
-        RecallFormat::Pi => {
-            let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-            parse(&raw)
-        }
+        RecallFormat::Pi => load_pi(path),
         RecallFormat::Claude => recall_claude::load_path(path, &stem),
         RecallFormat::Auto => {
             if sniff_claude(path) {
                 recall_claude::load_path(path, &stem)
             } else {
-                let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-                parse(&raw)
+                load_pi(path)
             }
         }
     }
@@ -71,19 +67,33 @@ fn sniff_claude(path: &Path) -> bool {
             .unwrap_or(false);
     }
 }
-pub fn parse(raw: &str) -> Result<RecallFile, String> {
+/// Read a Pi session line by line: the file is never held whole, so peak
+/// memory follows the retained text instead of the file size.
+fn load_pi(path: &Path) -> Result<RecallFile, String> {
+    let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    parse_reader(BufReader::with_capacity(1 << 20, f))
+}
+
+fn parse_reader(mut rdr: impl BufRead) -> Result<RecallFile, String> {
     let mut sid = String::new();
     let mut entries = Vec::new();
     let mut ids = HashSet::new();
-    let lines: Vec<_> = raw.lines().collect();
-    for (line_index, line) in lines.iter().enumerate() {
-        let line = line.trim();
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        if rdr.read_line(&mut buf).map_err(|e| e.to_string())? == 0 {
+            break;
+        }
+        // Only the final line can lack a newline: a half-written last record
+        // is tolerated, any other malformed record is an error.
+        let unterminated = !buf.ends_with('\n');
+        let line = buf.trim();
         if line.is_empty() {
             continue;
         }
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) if line_index + 1 == lines.len() && !raw.ends_with('\n') => break,
+            Err(_) if unterminated => break,
             Err(_) => return Err("invalid JSON session record".into()),
         };
         let o = match v.as_object() {
@@ -215,4 +225,25 @@ pub fn lineage(f: &RecallFile, leaf: Option<&str>) -> Result<(Vec<usize>, Option
     }
     out.reverse();
     Ok((out, Some(chosen)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HEAD: &str = "{\"type\":\"session\",\"id\":\"s1\"}\n";
+    const ROW: &str = "{\"type\":\"message\",\"id\":\"a\",\"parentId\":null,\"message\":{\"role\":\"user\",\"content\":\"hi\"}}";
+
+    #[test]
+    fn streamed_parse_tolerates_only_a_half_written_last_record() {
+        let ok = format!("{HEAD}{ROW}\n{{\"type\":\"mess");
+        assert_eq!(parse_reader(ok.as_bytes()).unwrap().entries.len(), 1);
+        let bad = format!("{HEAD}{{\"type\":\"mess\n{ROW}\n");
+        assert_eq!(
+            parse_reader(bad.as_bytes()).err().unwrap(),
+            "invalid JSON session record"
+        );
+        let crlf = format!("{}{ROW}\r\n", HEAD.replace('\n', "\r\n"));
+        assert_eq!(parse_reader(crlf.as_bytes()).unwrap().entries.len(), 1);
+    }
 }

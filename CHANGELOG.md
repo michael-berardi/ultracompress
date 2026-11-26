@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.7.0 (2026-11-26) — Audit: image-aware cuts, better recall ranking, adapter fixes
+
+Measured on the same inputs before and after (0.6.5 against 0.7.0); method and
+numbers are in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
+Core
+
+- **Images count.** A screenshot a tool returned has no characters, so the size
+  estimate treated it as free and the kept tail could hold far more than its
+  budget. Images are now estimated from their pixel size (header only; the
+  payload is never decoded or copied). On a recorded 337-message session with
+  133 screenshots the estimate went from 74,840 to 196,773 tokens against
+  187,250 measured by the provider, and the kept tail from 179 messages to 57.
+- **Recall ranking.** Keyword recall uses BM25 with a term-coverage weight.
+  First-result accuracy on recorded sessions rose from 74.3% to 90.3% (288
+  samples) and from 77.2% to 89.6% on a held-out set (193 samples); top-5 from
+  96.2% to 97.9% and 99.0% to 100%.
+- **Less memory.** Session files are read line by line and image payloads are
+  cut to their header as they arrive. Peak memory on a 58 MB session: compact
+  129 MB to 37 MB, recall 73 MB to 17 MB, stats 129 MB to 44 MB. Speed is
+  unchanged or better (compact 40 ms to 20 ms).
+- **The brief keeps the newest work.** File lists kept the alphabetically first
+  24 entries and failures the first 8 seen; both now keep the newest. Screenshot
+  reads are not listed as files, and a file that was edited is listed once.
+- **Tool names from every harness.** `Edit`, `Write`, `Read`, `Bash`, `patch`,
+  `write_file`, `terminal` and similar are recognised, so the files and commits
+  sections are no longer empty outside Pi.
+- **Fewer false failures and facts.** "Outstanding Context" required only the
+  substring `error`, so search results and source listings were reported as
+  failures; it now needs a line shaped like a diagnostic. Key Facts no longer
+  accept dates, CSS classes or checklist prose as error codes.
+- **Bounded over repeated compactions.** Sticky sections are capped after each
+  merge, and a later window no longer adds a second "goal".
+- `transform` lists every block it examined and left as text in `no_gain`.
+- Snap frame headers use ASCII; the box-drawing characters had no glyph and
+  rendered as `??`.
+- Crate metadata points at the real repository.
+
+Pi adapter 0.6.0
+
+- **Snap frames were sent without image data.** The adapter read `pngBase64`
+  while the CLI writes `png_base64`, so the archived text was replaced by an
+  empty image. Fixed, with an end-to-end test against the real binary; a block
+  is now left untouched whenever its frames cannot be delivered.
+- A block the CLI left as text is remembered, and the CLI is not started at all
+  for a text-only model or the `vcc` policy. Before, every such block was
+  re-sent on every model request.
+- A locally successful compaction is always applied; the "no estimated gain"
+  cancel could leave a full context uncompacted.
+- Snapshot retention (`snapshot.maxCount`, `snapshot.maxAgeDays`), a summary cap
+  for automatic compaction (`summaryMaxBytes`), calibration reset per session,
+  working debug output, the real version in `/ultracompress-stats`.
+
+Claude Code plugin 0.6.0
+
+- A second compaction passes the earlier brief back as the previous summary, so
+  its files, commits and facts merge instead of being summarized again.
+- One 30-second budget for the whole compaction instead of 30 seconds per
+  attempt; compact-all no longer runs the binary twice.
+- Recall honours `maxOutputBytes` up to 32000 (it always failed above 12000),
+  and an explicit `sessionFile` must be an existing `.jsonl` file.
+
+Hermes engine 0.6.0
+
+- The brief records which files were written or edited and which commits were
+  made; those tool calls were dropped before reaching the CLI.
+- The window is archived before the CLI runs, so a failure never loses history.
+- Hermes' own `compression.threshold` is honoured when the plugin setting is
+  unset; an empty window stays local instead of calling the model; recall can
+  page and reports total hits.
+
 ## 0.6.5 (2026-11-15) — CLI option validation
 
 - Reject invalid `--vision` values with exit status 2 instead of silently choosing

@@ -40,11 +40,18 @@ pub enum Block {
     Image {
         #[serde(default)]
         mime_type: String,
-        /// base64 payload when present.
+        /// Always empty: the payload is measured, never copied (a session
+        /// with screenshots would otherwise be held in memory twice).
         #[serde(default)]
         data: String,
         #[serde(default)]
         url: String,
+        /// Length of the base64 payload in the source.
+        #[serde(default)]
+        data_len: usize,
+        /// Estimated tokens this image costs in context.
+        #[serde(default)]
+        est_tokens: u64,
     },
     Other {
         #[serde(rename = "kind")]
@@ -110,10 +117,26 @@ impl RcMessage {
                 Block::Text { text } => text.len(),
                 Block::Thinking { thinking, text } => thinking.len() + text.len(),
                 Block::ToolResult { text, .. } => text.len(),
-                Block::ToolCall { arguments, .. } => arguments.to_string().len(),
+                Block::ToolCall { arguments, .. } => json_len(arguments),
                 _ => 0,
             })
             .sum()
+    }
+
+    /// Estimated tokens of attached images (they carry no characters).
+    pub fn image_tokens(&self) -> u64 {
+        self.content
+            .iter()
+            .map(|b| match b {
+                Block::Image { est_tokens, .. } => *est_tokens,
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Estimated tokens for the whole message: text at `cpt` plus images.
+    pub fn est_tokens(&self, cpt: f64) -> u64 {
+        crate::estimate::tokens_from_chars(self.total_chars(), cpt) + self.image_tokens()
     }
 
     pub fn text_preview(&self, max: usize) -> String {
@@ -129,6 +152,23 @@ impl RcMessage {
         }
         String::new()
     }
+}
+
+/// Serialized length of a JSON value without building the string.
+fn json_len(v: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len();
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut c = Count(0);
+    let _ = serde_json::to_writer(&mut c, v);
+    c.0
 }
 
 pub fn truncate_chars(s: &str, max: usize) -> String {
@@ -217,20 +257,20 @@ fn parse_block(v: &Value) -> Option<Block> {
             // Claude Code nests the payload under `source` (base64 or URL).
             let source = obj.get("source").and_then(Value::as_object);
             let field = |name: &str| obj.get(name).or_else(|| source.and_then(|s| s.get(name)));
+            let data = field("data").and_then(|t| t.as_str()).unwrap_or("");
             Some(Block::Image {
                 mime_type: field("mimeType")
                     .or_else(|| field("media_type"))
                     .and_then(|t| t.as_str())
                     .unwrap_or("image/png")
                     .to_string(),
-                data: field("data")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string(),
+                data: String::new(),
                 url: field("url")
                     .and_then(|t| t.as_str())
                     .unwrap_or("")
                     .to_string(),
+                data_len: data.len(),
+                est_tokens: crate::estimate::image_tokens_from_base64(data),
             })
         }
         other => Some(Block::Other {
@@ -328,7 +368,13 @@ fn normalize_tool_result(content: Vec<Block>, meta: &serde_json::Map<String, Val
         })
         .collect::<Vec<_>>()
         .join("\n");
-    vec![Block::ToolResult {
+    // Images returned by a tool (screenshots) stay as blocks after the text,
+    // so their context cost is still counted.
+    let images: Vec<Block> = content
+        .into_iter()
+        .filter(|b| matches!(b, Block::Image { .. }))
+        .collect();
+    let mut out = vec![Block::ToolResult {
         tool_call_id: meta
             .get("toolCallId")
             .or_else(|| meta.get("tool_call_id"))
@@ -347,7 +393,45 @@ fn normalize_tool_result(content: Vec<Block>, meta: &serde_json::Map<String, Val
             .or_else(|| meta.get("is_error"))
             .and_then(|t| t.as_bool())
             .unwrap_or(false),
-    }]
+    }];
+    out.extend(images);
+    out
+}
+
+/// Base64 characters kept from an image payload: enough for any header.
+const IMAGE_HEAD_CHARS: usize = 128 * 1024;
+
+/// Shorten every image payload in a raw entry to its header. The size
+/// estimate reads only the header, so a session full of screenshots no
+/// longer has to be held in memory in full.
+pub fn trim_image_payloads(v: &mut Value) {
+    match v {
+        Value::Array(items) => items.iter_mut().for_each(trim_image_payloads),
+        Value::Object(o) => {
+            if o.get("type").and_then(Value::as_str) == Some("image") {
+                trim_data(o);
+                if let Some(Value::Object(src)) = o.get_mut("source") {
+                    trim_data(src);
+                }
+                return;
+            }
+            for key in ["message", "content"] {
+                if let Some(child) = o.get_mut(key) {
+                    trim_image_payloads(child);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn trim_data(o: &mut serde_json::Map<String, Value>) {
+    if let Some(Value::String(data)) = o.get_mut("data") {
+        if data.len() > IMAGE_HEAD_CHARS && data.is_char_boundary(IMAGE_HEAD_CHARS) {
+            data.truncate(IMAGE_HEAD_CHARS);
+            data.shrink_to_fit();
+        }
+    }
 }
 
 /// Parse an array of messages (the extension stdin contract).
@@ -359,5 +443,71 @@ pub fn parse_messages(v: &Value) -> Vec<RcMessage> {
             .filter_map(|(i, item)| parse_message(item, &format!("m{i}")))
             .collect(),
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn images_are_measured_not_copied() {
+        let mut head = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        head.extend_from_slice(&1500u32.to_be_bytes());
+        head.extend_from_slice(&1000u32.to_be_bytes());
+        let mut data = crate::snap::base64_encode(&head);
+        data.push_str(&"A".repeat(400_000));
+        let mut entry = json!({ "type": "message", "id": "e1", "message": { "role": "toolResult",
+            "toolName": "read", "content": [
+                { "type": "text", "text": "Read image file" },
+                { "type": "image", "mimeType": "image/png", "data": data }
+            ] } });
+        let full = parse_message(&entry, "x").unwrap();
+        assert_eq!(full.image_tokens(), 1_600);
+        assert_eq!(full.total_chars(), "Read image file".len());
+        assert!(
+            matches!(&full.content[0], Block::ToolResult { text, .. } if text == "Read image file")
+        );
+        assert!(
+            matches!(&full.content[1], Block::Image { data, data_len, .. }
+            if data.is_empty() && *data_len > 400_000)
+        );
+        // Trimming the payload leaves the estimate unchanged.
+        trim_image_payloads(&mut entry);
+        let kept = entry["message"]["content"][1]["data"]
+            .as_str()
+            .unwrap()
+            .len();
+        assert_eq!(kept, IMAGE_HEAD_CHARS);
+        assert_eq!(parse_message(&entry, "x").unwrap().image_tokens(), 1_600);
+        // Claude Code nests the payload under `source`.
+        let mut nested = json!({ "role": "user", "content": [
+            { "type": "image", "source": { "type": "base64", "media_type": "image/png",
+              "data": "A".repeat(300_000) } } ] });
+        trim_image_payloads(&mut nested);
+        assert_eq!(
+            nested["content"][0]["source"]["data"]
+                .as_str()
+                .unwrap()
+                .len(),
+            IMAGE_HEAD_CHARS
+        );
+    }
+
+    #[test]
+    fn tool_call_size_matches_its_serialized_length() {
+        let args = json!({"command": "echo \"hi\"\n", "n": [1, 2, {"k": null}]});
+        let m = RcMessage {
+            id: "a".into(),
+            role: Role::Assistant,
+            content: vec![Block::ToolCall {
+                id: "1".into(),
+                name: "bash".into(),
+                arguments: args.clone(),
+            }],
+            timestamp: None,
+        };
+        assert_eq!(m.total_chars(), args.to_string().len());
     }
 }

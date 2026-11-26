@@ -76,7 +76,9 @@ function queryFrom(text) {
   const words = [...freq.entries()].filter(([, n]) => n >= 1);
   // Prefer longer, less common words (rare inside the block itself).
   words.sort((a, b) => (b[0].length - a[0].length) || (a[1] - b[1]));
-  return words.slice(0, 4).map(([w]) => w).join(" ");
+  // Recall accepts queries of at most 512 characters; one very long token
+  // (a key, a hash) must not turn a sample into a failed operation.
+  return words.filter(([w]) => w.length <= 64).slice(0, 4).map(([w]) => w).join(" ");
 }
 
 const fmt = (n) => n.toLocaleString("en-US");

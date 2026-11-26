@@ -1,20 +1,23 @@
 /**
  * UltraCompress compaction — claude plugin tests (engine's own host).
- * Covers: entry mapping with tool calls, cut adjustment around tool results,
- * failure -> next(e) (stock compaction), binary candidate resolution,
- * precompute skip, the success message shape with kept handles preserved, and
- * the direct-binary recall contract (transcript resolution, default scope all,
- * readable failures).
+ * Covers: entry mapping with tool calls and null slots, cut adjustment around
+ * tool results, compact-all, failure -> next(e) (stock compaction), the single
+ * shared compaction budget, binary candidate resolution, precompute skip, the
+ * success message shape with kept handles preserved, honest token estimates,
+ * and the direct-binary recall contract (transcript resolution, default scope
+ * all, the caller's output budget, readable failures).
  */
 import { expect, test } from 'claude-code/testing';
 import {
   boundedRecallText,
   capSummaryUtf8,
   chooseCut,
+  clock,
   firstKeptIndexFromId,
   formatCompactNotice,
   handleCompact,
   handleRecallCall,
+  previousBrief,
   recallArgvFrom,
   register,
   toEntries,
@@ -216,6 +219,8 @@ test('success hands the summary message first, keeps handles, and reports honest
   expect(stdin.policy).toBe('auto');
   expect(stdin.smartKeepTail).toBe(true);
   expect(stdin.vision).toBe('auto');
+  // The binary ignores snapMinChars on the compact path; sending it was dead.
+  expect('snapMinChars' in stdin).toBe(false);
   expect(stdin.entries.some((en: any) => en.message?.role === 'toolResult')).toBe(true);
   // The binary kept from m2 (a tool-result message), so the hook reran it over
   // exactly m0..m2 with keep 0: m2 is summarized, not dropped between the cuts.
@@ -240,8 +245,8 @@ test('success hands the summary message first, keeps handles, and reports honest
   expect(out.messages[2].handle).toBe('h4');
   expect(out.messages[3].handle).toBe('h5');
   expect(out.tokensBefore).toBe(182000);
-  expect(out.tokensAfter).toBe(24000);
-  expect(logs.join('\n')).toContain('UltraCompress · 182k → 24k tokens (−87%) · kept 3 messages');
+  expect(out.tokensAfter).toBe(63); // summary message + m3..m5, not the run's longer tail
+  expect(logs.join('\n')).toContain('UltraCompress · 182k → 63 tokens (−100%) · kept 3 messages');
 });
 
 test('header counts condensed messages (the cut), not the kept tail', async () => {
@@ -338,7 +343,7 @@ test('summary cap and recall argv obey their byte/parameter bounds', () => {
   expect(() => recallArgvFrom({ query: '' }, '/tmp/s.jsonl')).toThrow(/query/);
   expect(() => recallArgvFrom({ query: 'x', nope: 1 }, '/tmp/s.jsonl')).toThrow(/Unknown recall option/);
   expect(() => recallArgvFrom({ query: 'x' }, undefined)).toThrow(/session file/i);
-  expect(() => boundedRecallText('x'.repeat(13000))).toThrow(/byte budget/);
+  expect(() => boundedRecallText('x'.repeat(13000))).toThrow(/byte output budget/);
   expect(boundedRecallText('{"ok":true}')).toBe('{"ok":true}');
 
   // The transcript path Claude Code itself writes, with CLAUDE_CONFIG_DIR and without.
@@ -424,4 +429,218 @@ test('engine wiring: the registered hooks answer session.compact over the engine
   register(on, {});
   const out = await ($.session as any).compact({ trigger: 'precompute', messages: [] });
   expect(out).toEqual({ skip: 'UltraCompress compacts at the real trigger' });
+});
+
+test('toEntries skips null toolUse and toolResult slots instead of throwing', () => {
+  const entries = toEntries([
+    {
+      role: 'assistant',
+      text: 'hi',
+      toolUses: [null, { tool_use_id: 't1', tool: 'Bash', input: { command: 'ls' } }],
+    },
+    { role: 'user', text: '', toolUses: [], toolResults: [null, { tool_use_id: 't1', text: 'a.txt', isError: false }] },
+  ]);
+  expect(entries.map((en: any) => en.id)).toEqual(['m0', 'm1:r0', 'm1:r1']);
+  expect(entries[0].message.content).toEqual([
+    { type: 'text', text: 'hi' },
+    { type: 'toolCall', id: 't1', name: 'Bash', arguments: { command: 'ls' } },
+  ]);
+  // The empty slot still owns its id so later results keep their positions.
+  expect(entries[1].message).toEqual({
+    role: 'toolResult',
+    toolCallId: undefined,
+    toolName: '',
+    content: [{ type: 'text', text: '' }],
+    isError: false,
+  });
+  expect(entries[2].message).toEqual({
+    role: 'toolResult',
+    toolCallId: 't1',
+    toolName: 'Bash',
+    content: [{ type: 'text', text: 'a.txt' }],
+    isError: false,
+  });
+});
+
+test('an empty first_kept_entry_id is compact-all: one run, summary only', async () => {
+  const messages = transcript();
+  const stdins: any[] = [];
+  const { $, logs } = mock$({
+    home: '/home/x',
+    stat: { kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+    run: async (_argv, init) => {
+      stdins.push(JSON.parse(init.stdin));
+      return { exitCode: 0, stdout: JSON.stringify({ ...RC, first_kept_entry_id: '' }), stderr: '' };
+    },
+  });
+  const next = async () => { throw new Error('next must not run on a compact-all summary'); };
+  const out: any = await handleCompact($, { trigger: 'auto', messages }, next);
+
+  // The binary already summarized every entry, so nothing is retried and no
+  // tail is forced.
+  expect(stdins).toHaveLength(1);
+  expect(stdins[0].keepUserTurns).toBeNull();
+  expect(stdins[0].entries).toHaveLength(6);
+  expect(out.messages).toHaveLength(1);
+  expect(out.messages[0].text).toContain('(6 messages condensed;');
+  expect(out.messages[0].text).toContain(RC.summary);
+  expect(logs.join('\n')).toContain('kept 0 messages');
+});
+
+test('attempts share one 30 s budget instead of 30 s each', async () => {
+  const messages = transcript();
+  const timeouts: number[] = [];
+  const realNow = clock.now;
+  let now = 1_000_000;
+  clock.now = () => now;
+  try {
+    const { $, logs } = mock$({
+      home: '/home/x',
+      stat: { kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+      run: async (_argv, init) => {
+        timeouts.push(init.timeoutMs);
+        now += 20_000; // each attempt spends 20 s of the single budget
+        return timeouts.length === 1
+          ? { exitCode: 0, stdout: JSON.stringify(RC), stderr: '' }
+          : { exitCode: 2, stdout: '', stderr: 'ultracompress: nothing to compact: no safe cut point' };
+      },
+    });
+    const nextCalls: unknown[] = [];
+    const next = async (ev: unknown) => { nextCalls.push(ev); return { messages: ['stock'] }; };
+    const out = await handleCompact($, { trigger: 'auto', messages }, next);
+    // The retry gets what is left of the 30 s, and the third attempt is refused
+    // rather than granted a fresh 30 s.
+    expect(timeouts).toEqual([30_000, 10_000]);
+    expect(out).toEqual({ messages: ['stock'] });
+    expect(nextCalls).toHaveLength(1);
+    expect(logs.join('\n')).toContain('30s compaction budget');
+  } finally {
+    clock.now = realNow;
+  }
+});
+
+test('an oversized compact result is refused before JSON.parse', async () => {
+  const messages = transcript();
+  const { $, logs } = mock$({
+    home: '/home/x',
+    stat: { kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+    run: async () => ({ exitCode: 0, stdout: 'x'.repeat(1_048_577), stderr: '' }),
+  });
+  const nextCalls: unknown[] = [];
+  const out = await handleCompact($, { trigger: 'auto', messages }, async (ev: unknown) => {
+    nextCalls.push(ev);
+    return { messages: ['stock'] };
+  });
+  expect(out).toEqual({ messages: ['stock'] });
+  expect(nextCalls).toHaveLength(1);
+  expect(logs.join('\n')).toContain('over the 1048576-char limit');
+});
+
+test('the reported after-estimate counts the rows actually kept', async () => {
+  const messages = transcript();
+  const { $ } = mock$({
+    home: '/home/x',
+    stat: { kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+    run: async () => ({ exitCode: 0, stdout: JSON.stringify(RC), stderr: '' }),
+  });
+  const out: any = await handleCompact($, { trigger: 'manual', messages }, async () => ({}));
+  // The binary reported 24000 for a tail it kept from m2; the hook keeps from
+  // m3, so the after figure is the summary message (209 chars) plus m3..m5
+  // (42 chars) at the 4 chars/token the binary calibrated with: 251 / 4.
+  expect(out.messages).toHaveLength(4);
+  expect(out.tokensBefore).toBe(182000);
+  expect(out.tokensAfter).toBe(63);
+  expect(out.tokensAfter).toBeLessThan(RC.stats.tokens_after_est);
+});
+
+test("recall honours the caller's maxOutputBytes, trims the CLI newline, and reports empty output as empty", async () => {
+  const FILE = { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false };
+  // The binary caps its own result at --max-output-bytes, so a 15 KB page is
+  // what an explicitly widened budget legitimately returns, and the CLI ends
+  // that JSON with a newline that is not part of the result.
+  const wideBody = JSON.stringify({ hits: [{ snippet: 'x'.repeat(15000) }] });
+  const calls: Array<{ argv: readonly string[]; init: any }> = [];
+  const run = async (argv: readonly string[], init: any) => {
+    calls.push({ argv, init });
+    return { exitCode: 0, stdout: `${wideBody}\n`, stderr: '' };
+  };
+  const widened = mock$({ stat: () => FILE, run, env: { ULTRACOMPRESS_BIN: '/opt/tools/bin/ultracompress' } });
+  const outWide: any = await handleRecallCall(widened.$, { sessionFile: '/t/other.jsonl', query: 'x', maxOutputBytes: 20000 });
+  expect(calls[0].argv[calls[0].argv.indexOf('--max-output-bytes') + 1]).toBe('20000');
+  expect(outWide.result).toBe(wideBody);
+
+  // The 12,000-byte default still refuses it, and names the budget it used.
+  const narrow = mock$({ stat: () => FILE, run, env: { ULTRACOMPRESS_BIN: '/opt/tools/bin/ultracompress' } });
+  const outNarrow: any = await handleRecallCall(narrow.$, { sessionFile: '/t/other.jsonl', query: 'x' });
+  expect(outNarrow.result).toContain('Recall bridge exceeded the 12000-byte output budget');
+
+  // The bridge clamps to the tool's own 1024..32000 range.
+  expect(boundedRecallText('y'.repeat(32000), 1_000_000)).toHaveLength(32000);
+  expect(() => boundedRecallText('y'.repeat(32001), 1_000_000)).toThrow(/32000-byte/);
+  expect(() => boundedRecallText('y'.repeat(2000), 1)).toThrow(/1024-byte/);
+  expect(boundedRecallText('{}' + '\n')).toBe('{}');
+  expect(boundedRecallText('')).toBe('');
+  expect(boundedRecallText('\n')).toBe('');
+});
+
+test('an explicit sessionFile must be a regular .jsonl transcript', async () => {
+  const FILE = { kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false };
+  const runCalls: Array<readonly string[]> = [];
+  const run = async (argv: readonly string[]) => {
+    runCalls.push(argv);
+    return { exitCode: 0, stdout: '{}', stderr: '' };
+  };
+
+  // Wrong extension: refused before the binary is even resolved.
+  const wrongExtension = mock$({ stat: () => FILE, run, env: { ULTRACOMPRESS_BIN: '/opt/tools/bin/ultracompress' } });
+  const outExt: any = await handleRecallCall(wrongExtension.$, { sessionFile: '/t/notes.txt', query: 'x' });
+  expect(outExt.result).toContain('sessionFile must be a .jsonl transcript: /t/notes.txt');
+
+  // Missing file: the binary is found, the transcript is not.
+  const missing = mock$({
+    home: '/home/x',
+    stat: (path: string) => (String(path).endsWith('/ultracompress') ? FILE : undefined),
+    run,
+  });
+  const outMissing: any = await handleRecallCall(missing.$, { sessionFile: '/t/gone.jsonl', query: 'x' });
+  expect(outMissing.result).toContain('sessionFile is not a regular file: /t/gone.jsonl');
+
+  // A directory is not a transcript, even when it ends in .jsonl.
+  const directory = mock$({
+    stat: (path: string) => (String(path).endsWith('/ultracompress') ? FILE : { kind: 'dir', size: 0, mtimeMs: 0, isLink: false }),
+    run,
+    env: { ULTRACOMPRESS_BIN: '/opt/tools/bin/ultracompress' },
+  });
+  const outDir: any = await handleRecallCall(directory.$, { sessionFile: '/t/dir.jsonl', query: 'x' });
+  expect(outDir.result).toContain('sessionFile is not a regular file: /t/dir.jsonl');
+
+  expect(runCalls).toHaveLength(0);
+});
+
+test('a second compaction passes the earlier brief back as previousSummary, not as a user turn', async () => {
+  const brief = '[Session Goal]\n- ship the importer\n\n[Files And Changes]\n- Modified: src/a.ts';
+  const header = 'UltraCompress summary of the earlier conversation (9 messages condensed; ' +
+    'recall archived detail with the ultracompress_recall tool)';
+  const messages = [{ role: 'user', text: `${header}\n\n${brief}`, toolUses: [] }, ...transcript()];
+  expect(previousBrief(messages)).toBe(brief);
+  expect(previousBrief(transcript())).toBeNull();
+  expect(previousBrief([{ role: 'user', text: header, toolUses: [] }])).toBeNull();
+
+  const payloads: any[] = [];
+  const { $ } = mock$({
+    home: '/home/x',
+    stat: { kind: 'file', size: 1, mtimeMs: 0, isLink: false },
+    run: async (_argv, init) => {
+      payloads.push(JSON.parse(init.stdin));
+      return { exitCode: 0, stdout: JSON.stringify({ ...RC, first_kept_entry_id: '' }), stderr: '' };
+    },
+  });
+  const out: any = await handleCompact($, { trigger: 'manual', messages }, async () => ({}));
+  expect(payloads).toHaveLength(1);
+  expect(payloads[0].previousSummary).toBe(brief);
+  // The brief message (m0) is not sent again as conversation; later ids keep their positions.
+  expect(payloads[0].entries.some((en: any) => en.id === 'm0')).toBe(false);
+  expect(payloads[0].entries[0].id).toBe('m1');
+  expect(JSON.stringify(payloads[0].entries)).not.toContain('ship the importer');
+  expect(out.messages[0].text).toContain(RC.summary);
 });

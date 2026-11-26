@@ -33,7 +33,7 @@ know who summarized what.
 You need the `ultracompress` binary (Rust 1.85+ to build):
 
 ```sh
-git clone --branch v0.6.5 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.7.0 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release -j4
 mkdir -p ~/.local/bin && cp target/release/ultracompress ~/.local/bin/
@@ -46,9 +46,11 @@ claude --plugin-dir /path/to/ultracompress/claude-code
 ```
 
 For every session, copy or symlink the folder where Claude Code auto-loads
-plugins from:
+plugins from (`claude plugin init` scaffolds that same layout, and the plugin
+loads next session as `ultracompress@skills-dir`):
 
 ```sh
+mkdir -p ~/.claude/skills
 ln -s /path/to/ultracompress/claude-code ~/.claude/skills/ultracompress
 ```
 
@@ -85,12 +87,23 @@ surfaces as a readable failure in the log, then stock compaction takes over.
 
 ## Fallback behaviour
 
-Every UltraCompress call is best-effort. If the binary is missing, fails,
-times out (30 s), or yields no clean cut, the plugin steps aside with one log
-line and Claude Code's stock compaction runs instead. A failed compaction
-never costs you the session; it costs you one deterministic summary you can
-retry next time. Recall failures come back as readable tool results naming the
-reason, never as hangs or throws.
+Every UltraCompress call is best-effort, and one compaction shares a single
+30 s budget: a retry gets what is left of it, never a fresh 30 s.
+
+When the binary's own cut lands on a tool result, the plugin re-summarizes
+exactly the messages it does not keep (one extra call inside that same budget),
+so the summary never claims to cover messages it left behind. When a
+conversation has no clean cut at all, it retries once asking for a summary of
+everything. When the binary has already summarized every message (an empty
+`first_kept_entry_id`), that is accepted as it stands, with no retry.
+
+If the binary is missing, fails, runs out of that budget, or yields no usable
+summary, the plugin steps aside with a visible log line
+(`UltraCompress · stock compaction: <reason>`) plus a debug detail line, and
+Claude Code's stock compaction runs instead. A failed compaction never costs
+you the session; it costs you one deterministic summary you can retry next
+time. Recall failures come back as readable tool results naming the reason,
+never as hangs or throws.
 
 ## Uninstall
 
@@ -117,8 +130,11 @@ same hooks compete for the same events, and neither wins gracefully.
   since the last compaction. Lineage stops at compaction boundaries in real
   transcripts, which is why it is not the default here.
 - Results are bounded: 5 hits per page (20 max), 4,000 UTF-8 bytes per
-  excerpt, 12,000 bytes for the complete result. These are byte budgets, not
-  token guarantees.
+  excerpt, and 12,000 bytes for the complete result — `maxOutputBytes` raises
+  that, up to the tool's 32,000-byte maximum. These are byte budgets, not token
+  guarantees.
+- An explicit `sessionFile` must be a regular `.jsonl` transcript file.
+  Anything else fails with a readable tool result instead of being read.
 - No benchmark claims are made here. See
   [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md) for what has actually been
   measured, on which fixtures.

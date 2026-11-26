@@ -1,20 +1,31 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { writeFileSync } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { runUltraCompress } from "./src/bridge";
 import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
-import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
-import { listSnaps, writeSnapEntries } from "./src/snapshot";
+import {
+  isUltraCompressBinAvailable,
+  loadSettings,
+  packageVersion,
+  resolveUltraCompressBin,
+  type UltraCompressSettings,
+} from "./src/settings";
+import { TextKeyCache } from "./src/text-key-cache";
+import { countSnaps, listSnaps, writeSnapEntries } from "./src/snapshot";
 import {
   applyTransforms,
   cacheKey,
   capCache,
   collectCandidates,
-  nextUserIndex,
+  snapTextReplacement,
   type AgentLikeMessage,
   type UltraCompressOp,
   type TransformResponse,
 } from "./src/transforms";
 import {
   buildCompactStdin,
+  capSummary,
   formatStatsLine,
   parseUltraCompressArgs,
   toCompactionResult,
@@ -38,72 +49,81 @@ import {
  * stock text. UltraCompress never bricks a session.
  */
 
-const AUTO_CONTINUE_CUSTOM_TYPE = "ultracompress-auto-continue";
+/** Retries allowed for one block before a failing transform is left alone for the session. */
+const MAX_TRANSFORM_FAILURES = 2;
 
 export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();
   const ultracompressBin = resolveUltraCompressBin(settings);
+  // Resolved once: without the binary, live transforms would spawn a failing
+  // process on every request that carries a large tool result.
+  const binAvailable = isUltraCompressBinAvailable(ultracompressBin);
   const transformCache = new Map<string, { op: UltraCompressOp; blocks: Array<Record<string, unknown>> }>();
   const noGainCache = new Map<string, true>();
-  pi.on("session_start", () => {
-    transformCache.clear();
-    noGainCache.clear();
-  });
+  const transformFailures = new Map<string, number>();
+  const textKeys = new TextKeyCache();
   let lastCalibratedCpt: number | undefined;
   let visionKnown: boolean | null = null;
 
+  pi.on("session_start", () => {
+    transformCache.clear();
+    noGainCache.clear();
+    transformFailures.clear();
+    textKeys.clear();
+    // Calibration and vision describe one model in one session; never carry
+    // a previous session's chars-per-token into the next one.
+    lastCalibratedCpt = undefined;
+    visionKnown = null;
+  });
+
+  let debugWriteFailed = false;
   const dbg = (data: Record<string, unknown>) => {
     if (!settings.debug) return;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-      writeFileSync("/tmp/ultracompress-debug.json", JSON.stringify(data, null, 2));
-    } catch {}
+      writeFileSync(path.join(os.tmpdir(), "ultracompress-debug.json"), JSON.stringify(data, null, 2));
+    } catch (error) {
+      if (debugWriteFailed) return;
+      debugWriteFailed = true;
+      console.error("[ultracompress] debug write failed:", error);
+    }
   };
 
-  const keyFor = (text: string) =>
-    cacheKey(
-      { p: settings.policy, v: visionKnown, s: settings.snap.minChars,
-        snap: settings.snap.enabled,
-        imageTokens: settings.snap.imageTokensPerFrame, cpt: lastCalibratedCpt },
-      text,
-    );
-
-  // Remove our invisible-continue marker from LLM payloads (matched by type only).
-  pi.on("context", (event) => {
-    const messages = event.messages.filter(
-      (m: { role?: string; customType?: string }) =>
-        !(m.role === "custom" && m.customType === AUTO_CONTINUE_CUSTOM_TYPE),
-    );
-    if (messages.length !== event.messages.length) return { messages };
-    return undefined;
-  });
+  /** Whether this request's model can receive inline base64 frames. */
+  const detectVision = (ctx: any): boolean | null => {
+    try {
+      const model = ctx?.model as { input?: string[]; provider?: string } | undefined;
+      const registryVision = Array.isArray(model?.input) ? model!.input.includes("image") : false;
+      const providerOk = settings.snap.providers.includes(String(model?.provider ?? ""));
+      return registryVision && providerOk;
+    } catch {
+      return null;
+    }
+  };
 
   // ── Live transforms ────────────────────────────────────────────────────
   pi.on("context", async (event, ctx) => {
-    if (!settings.snap.enabled) return undefined;
+    if (!binAvailable || !settings.snap.enabled) return undefined;
     // Re-evaluate on model switches; a session-start vision latch can send
     // cached image transforms to a later text-only model.
-    {
-      try {
-        const model = ctx?.model as { input?: string[]; provider?: string } | undefined;
-        const registryVision = Array.isArray(model?.input) ? model!.input.includes("image") : false;
-        const providerOk = settings.snap.providers.includes(String(model?.provider ?? ""));
-        visionKnown = registryVision && providerOk;
-      } catch {
-        visionKnown = null;
-      }
-    }
+    visionKnown = detectVision(ctx);
+    // Without an image-capable model, or when the policy is text-only VCC,
+    // every scanned block would come back unchanged — do not spawn at all.
+    if (visionKnown !== true || settings.policy === "vcc") return undefined;
     const minChars = settings.snap.minChars;
     const messages = event.messages as unknown as AgentLikeMessage[];
-    // Reuse keys only within this request: repeated text and the apply pass need
-    // no second serialization/hash. Keep candidate occurrences (and their order)
-    // intact, and recompute with current settings/calibration on the next request.
+    // Context objects are deep-copied by Pi: exact strings, not message IDs,
+    // are the safe reuse boundary. Bound retained text and invalidate on settings.
+    const keyParts = {
+      p: settings.policy, v: visionKnown, s: settings.snap.minChars,
+      snap: settings.snap.enabled,
+      imageTokens: settings.snap.imageTokensPerFrame, cpt: lastCalibratedCpt,
+    };
+    textKeys.setScope(JSON.stringify(keyParts));
     const requestKeys = new Map<string, string>();
     const requestKeyFor = (text: string): string => {
       let key = requestKeys.get(text);
       if (key === undefined) {
-        key = keyFor(text);
+        key = textKeys.get(text, () => cacheKey(keyParts, text));
         requestKeys.set(text, key);
       }
       return key;
@@ -138,7 +158,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
           "--policy",
           String(payload.policy),
           "--vision",
-          !settings.snap.enabled ? "off" : (payload.vision as string),
+          payload.vision as string,
         ],
         payload,
       );
@@ -148,30 +168,34 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
           if (!c) continue;
           if (op.op === "snap") {
             // Snap replacement is assembled at apply time (frames may travel
-            // to the next user message); store the op with edge text blocks.
-            transformCache.set(c.key, {
-              op,
-              blocks: [
-                {
-                  type: "text",
-                  text: `${op.head}\n[ultracompress: ${op.frames.length} image frame(s) hold the archived middle — ${op.frames
-                    .map((f) => f.id)
-                    .join(", ")}]${op.tail}`,
-                },
-              ],
-            });
+            // to the next user message); store the op with its edge text block.
+            transformCache.set(c.key, { op, blocks: snapTextReplacement(op) });
           }
         }
-        // Only the newer core's explicit successful decisions are memoized.
-        // Legacy responses and process failures remain retryable.
+        // Explicit no-gain decisions from the core, when it reports them.
         for (const position of res.data.no_gain ?? []) {
           const c = fresh[position.message_index];
           if (c && position.block_index === 0 && !transformCache.has(c.key)) noGainCache.set(c.key, true);
         }
+        // A successful response is also a decision for every block it left
+        // alone: those stay text. Recording them keeps a non-snap block
+        // (text-only model, VCC routing, older binary without `no_gain`) from
+        // being re-sent to the CLI on every single request.
+        for (const c of fresh) {
+          if (!transformCache.has(c.key)) noGainCache.set(c.key, true);
+        }
+        transformFailures.clear();
         capCache(transformCache);
         capCache(noGainCache);
       } else if (res.error) {
         dbg({ transformError: res.error });
+        // Repeated failures stop being retried for the rest of the session.
+        for (const c of fresh) {
+          const failures = (transformFailures.get(c.key) ?? 0) + 1;
+          transformFailures.set(c.key, failures);
+          if (failures >= MAX_TRANSFORM_FAILURES) noGainCache.set(c.key, true);
+        }
+        capCache(noGainCache);
       }
     }
 
@@ -206,21 +230,26 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     const args = parseUltraCompressArgs(
       isExplicitUltraCompress ? custom.slice("/ultracompress".length) : custom,
     );
-    const modelVision = (() => {
+    // The brief is deterministic: free-text instructions cannot be honoured,
+    // so say so once instead of dropping them silently.
+    if (args.prompt) {
       try {
-        const model = ctx?.model as { input?: string[]; provider?: string } | undefined;
-        const registryVision = Array.isArray(model?.input) ? model!.input.includes("image") : false;
-        return settings.snap.enabled && registryVision && settings.snap.providers.includes(String(model?.provider ?? ""));
-      } catch {
-        return null;
-      }
+        ctx?.ui?.notify?.(
+          "ultracompress: the deterministic brief does not use free-text instructions; it keeps the session's own structure",
+          "warning",
+        );
+      } catch {}
+    }
+    const modelVision = (() => {
+      const vision = detectVision(ctx);
+      return vision === null ? null : settings.snap.enabled && vision;
     })();
 
     // Safety snapshot first — never blocks compaction.
     if (settings.snapshot.enabled) {
       try {
         const entries = ctx.sessionManager.getEntries() ?? [];
-        writeSnapEntries(process.cwd(), entries, ev.reason ?? "unknown", Date.now());
+        writeSnapEntries(process.cwd(), entries, ev.reason ?? "unknown", Date.now(), settings.snapshot);
       } catch (error) {
         console.error("[ultracompress] snapshot failed:", error);
       }
@@ -234,6 +263,11 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
       snapMinChars: settings.snap.minChars,
     });
 
+    // Automatic compaction caps both sides of the summary channel; an explicit
+    // /ultracompress run is the operator asking for the full brief.
+    if (!isExplicitUltraCompress && stdin.previousSummary) {
+      stdin.previousSummary = capSummary(stdin.previousSummary, settings.summaryMaxBytes);
+    }
     const rcArgs = ["compact", "--policy", stdin.policy, "--vision", stdin.vision as string];
     const res = await runUltraCompress<UltraCompressCompactResult>(ultracompressBin, rcArgs,
       { ...stdin, imageTokensPerFrame: settings.snap.imageTokensPerFrame }, 30_000);
@@ -247,20 +281,13 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     }
 
     const rc = res.data;
-    if (typeof rc.stats?.tokens_before_est === "number" &&
-        typeof rc.stats?.tokens_after_est === "number" &&
-        rc.stats.tokens_after_est >= rc.stats.tokens_before_est) {
-      // Cancel explicitly: falling through would start a paid core summary
-      // for a locally successful but non-beneficial compaction.
-      try { ctx?.ui?.notify?.("ultracompress: kept context unchanged (no estimated compaction gain)", "info"); } catch {}
-      return { cancel: true };
-    }
     if (typeof rc.stats?.chars_per_token === "number" && rc.stats.calibrated) {
       lastCalibratedCpt = rc.stats.chars_per_token;
     }
 
     const mapped = toCompactionResult(rc, ev.preparation?.tokensBefore);
     if (!mapped) return undefined;
+    if (!isExplicitUltraCompress) mapped.summary = capSummary(mapped.summary, settings.summaryMaxBytes);
 
     try {
       ctx?.ui?.notify?.(formatStatsLine(rc), "info");
@@ -271,7 +298,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
 
   // ── Commands ───────────────────────────────────────────────────────────
   pi.registerCommand("ultracompress", {
-    description: "Compact now with UltraCompress (keep:N policy:auto|vcc|snap, optional follow-up prompt)",
+    description: "Compact now with UltraCompress (keep:N policy:auto|vcc|snap)",
     handler: async (args, ctx) => {
       const custom = args?.trim() ? `/ultracompress ${args.trim()}` : "/ultracompress";
       try {
@@ -305,12 +332,13 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
       const lines = [
-        `ultracompress ${"0.2.1"}`,
-        `UltraCompress binary: ${ultracompressBin}`,
+        `ultracompress ${packageVersion()}`,
+        `UltraCompress binary: ${ultracompressBin}${binAvailable ? "" : " (not found)"}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
         `snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,
+        `summary cap: ${settings.summaryMaxBytes} bytes · snapshots kept: ${settings.snapshot.maxCount} / ${settings.snapshot.maxAgeDays}d`,
         `transforms cached: ${transformCache.size}`,
-        `snapshots: ${listSnaps(process.cwd()).length} in .steak-pi/snaps`,
+        `snapshots: ${countSnaps(process.cwd())} in .steak-pi/snaps`,
       ];
       await ctx.ui.notify(lines.join("\n"), "info");
     },
@@ -355,6 +383,5 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
       }
     },
   });
-
 
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -13,6 +13,23 @@ import * as url from "node:url";
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 const ULTRACOMPRESS = process.env.ULTRACOMPRESS_BIN ?? path.join(here, "..", "..", "target", "release", "ultracompress");
 const hasBinary = fs.existsSync(ULTRACOMPRESS);
+
+// The adapter must be driven with the real binary and inline placement; the
+// factory stays lazy so the resolved path is read after this module loads.
+vi.mock("../src/settings.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/settings.ts")>();
+  return {
+    ...actual,
+    loadSettings: () => ({
+      ...structuredClone(actual.DEFAULT_SETTINGS),
+      policy: "auto" as const,
+      snapshot: { ...structuredClone(actual.DEFAULT_SETTINGS.snapshot), enabled: false },
+      snap: { ...structuredClone(actual.DEFAULT_SETTINGS.snap), placement: "inline" as const, minChars: 600 },
+    }),
+    resolveUltraCompressBin: () => ULTRACOMPRESS,
+    isUltraCompressBinAvailable: (bin: string) => fs.existsSync(bin),
+  };
+});
 
 const FIXTURE = [
   { type: "session", id: "fx", cwd: "/tmp/proj" },
@@ -90,4 +107,31 @@ describe.skipIf(!hasBinary)("UltraCompress binary e2e", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+});
+
+describe.skipIf(!hasBinary)("adapter e2e with the real binary", () => {
+  it("replaces a long tool result with decodable PNG frames", async () => {
+    const { default: ultraCompressExtension } = await import("../index.ts");
+    const handlers = new Map<string, (event: any, ctx: any) => any>();
+    ultraCompressExtension({
+      on(name: string, handler: any) { handlers.set(name, handler); },
+      registerCommand() {}, registerTool() {},
+    } as never);
+    const long = Array.from({ length: 200 }, (_, i) => `warning: unused variable row_${i} in src/lib.rs`).join("\n");
+    const messages = [
+      { role: "user", content: "run the build" },
+      { role: "toolResult", content: [{ type: "text", text: long }] },
+      { role: "assistant", content: "done" },
+    ];
+    const result = await handlers.get("context")!({ messages }, { model: { provider: "anthropic", input: ["text", "image"] } });
+    expect(result).toBeDefined();
+    const content = result.messages[1].content as Array<Record<string, unknown>>;
+    const images = content.filter((block) => block.type === "image");
+    expect(images.length).toBeGreaterThan(0);
+    const data = String(images[0].data ?? "");
+    expect(data.length).toBeGreaterThan(0);
+    expect(data).not.toBe("undefined");
+    // Base64 of a real PNG must decode to the 8-byte PNG signature.
+    expect([...Buffer.from(data, "base64").subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  });
 });

@@ -79,6 +79,10 @@ pub struct RecallResult {
     pub warnings: usize,
 }
 
+/// BM25 term saturation and length normalization (standard values).
+const BM25_K1: f64 = 1.2;
+const BM25_B: f64 = 0.75;
+
 enum Matcher {
     Terms(Vec<String>),
     Regex(Regex),
@@ -102,6 +106,19 @@ fn flat(m: &crate::model::RcMessage) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+/// Lowercase for matching. ASCII text (most tool output) folds in place
+/// with no per-character Unicode table lookups.
+fn fold(t: &str) -> std::borrow::Cow<'_, str> {
+    if t.is_ascii() {
+        if t.bytes().any(|b| b.is_ascii_uppercase()) {
+            std::borrow::Cow::Owned(t.to_ascii_lowercase())
+        } else {
+            std::borrow::Cow::Borrowed(t)
+        }
+    } else {
+        std::borrow::Cow::Owned(t.to_lowercase())
+    }
 }
 fn has_tool(m: &crate::model::RcMessage, n: &str) -> bool {
     if !matches!(m.role, crate::model::Role::ToolResult) {
@@ -263,19 +280,50 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
         rows.push((e.id.clone(), m.role.to_string(), t, m.timestamp));
     }
     let searched = rows.len();
-    let mut df = HashMap::new();
+    // One lowercase pass per message: term counts and the first match are
+    // taken together, then document frequency follows from the counts.
+    let mut term_hits: Vec<Option<(Vec<usize>, usize)>> = Vec::new();
+    let mut df: Vec<usize> = Vec::new();
     if let Matcher::Terms(ts) = &matcher {
+        df = vec![0; ts.len()];
+        term_hits.reserve(rows.len());
         for (_, _, t, _) in &rows {
-            let l = t.to_lowercase();
-            for q in ts {
-                if l.contains(q) {
-                    *df.entry(q.clone()).or_insert(0) += 1
-                }
-            }
+            let l = fold(t);
+            let mut first = usize::MAX;
+            let mut any = false;
+            let counts: Vec<usize> = ts
+                .iter()
+                .enumerate()
+                .map(|(qi, q)| {
+                    let mut n = 0;
+                    for (pos, _) in l.match_indices(q.as_str()) {
+                        if n == 0 {
+                            first = first.min(pos);
+                        }
+                        n += 1;
+                    }
+                    if n > 0 {
+                        df[qi] += 1;
+                        any = true;
+                    }
+                    n
+                })
+                .collect();
+            term_hits.push(any.then(|| {
+                // ASCII text folds byte for byte; otherwise map the offset back.
+                let pos = if l.len() == t.len() && t.is_ascii() {
+                    first
+                } else {
+                    original_offset(t, first)
+                };
+                (counts, pos)
+            }));
         }
     }
+    let avg_len =
+        (rows.iter().map(|r| r.2.len()).sum::<usize>() as f64 / rows.len().max(1) as f64).max(1.0);
     let mut hits = Vec::new();
-    for (id, role, t, stamp) in rows {
+    for (row, (id, role, t, stamp)) in rows.into_iter().enumerate() {
         match &matcher {
             Matcher::Regex(re) => {
                 if let Some(x) = re.find(&t) {
@@ -290,20 +338,30 @@ pub fn search(path: &Path, o: &RecallOptions) -> Result<RecallResult, String> {
                 }
             }
             Matcher::Terms(ts) => {
-                let l = t.to_lowercase();
+                let Some((counts, p)) = term_hits[row].take() else {
+                    continue;
+                };
                 let mut score = 0.;
                 let mut mt = Vec::new();
-                for q in ts {
-                    if l.contains(q) {
-                        let n = l.matches(q).count();
-                        let d = df.get(q).copied().unwrap_or(1);
-                        score += (n as f64).ln_1p() * (searched as f64 / d as f64).ln().max(0.5);
+                for (qi, q) in ts.iter().enumerate() {
+                    let n = counts[qi];
+                    if n > 0 {
+                        let d = df[qi].max(1);
+                        // BM25: repeats saturate and long messages are
+                        // normalized, so one huge log that mentions a term
+                        // many times does not outrank the message about it.
+                        let idf = (searched as f64 / d as f64).ln().max(0.5);
+                        let nf = n as f64;
+                        let norm = 1.0 - BM25_B + BM25_B * t.len() as f64 / avg_len;
+                        score += idf * nf * (BM25_K1 + 1.0) / (nf + BM25_K1 * norm);
                         mt.push(q.clone())
                     }
                 }
+                // A message matching every query term beats one that repeats
+                // a single term.
+                let coverage = mt.len() as f64 / ts.len().max(1) as f64;
+                score *= coverage * coverage;
                 if score > 0.0 {
-                    let p =
-                        original_offset(&t, ts.iter().filter_map(|q| l.find(q)).min().unwrap_or(0));
                     hits.push(RecallHit {
                         entry_id: id,
                         role,

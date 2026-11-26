@@ -18,8 +18,8 @@ const image = { type: "image", data: "original-base64", mimeType: "image/png" };
 const snap: SnapOp = {
   op: "snap", message_index: 1, block_index: 0, head: "head\n", tail: "\ntail",
   frames: [
-    { id: "archive/frame-1", width: 10, height: 20, pngBase64: "Zmlyc3Q=" },
-    { id: "archive/frame-2", width: 20, height: 10, pngBase64: "c2Vjb25k" },
+    { id: "archive/frame-1", width: 10, height: 20, png_base64: "Zmlyc3Q=" },
+    { id: "archive/frame-2", width: 20, height: 10, png_base64: "c2Vjb25k" },
   ],
   tokens_before: 100, tokens_after: 10,
 };
@@ -42,7 +42,7 @@ function register(settings: UltraCompressSettings, model = { provider: "anthropi
     registerCommand() {}, registerTool() {},
   } as never);
   return {
-    context: (input: AgentLikeMessage[], fresh = false) => handlers.get("context")![1]({
+    context: (input: AgentLikeMessage[], fresh = false) => handlers.get("context")![0]({
       messages: fresh || input.some((m) => m.role === "assistant") ? input :
         [...input, { role: "assistant", content: [text("consumed")] }],
     }, { model }),
@@ -70,17 +70,19 @@ describe("request-local snap transform keys", () => {
     expect(result.messages[3].content).toBe(a);
     vi.mocked(transforms.cacheKey).mockClear();
     expect(await hooks.context(structuredClone(original))).toEqual(result);
-    expect(transforms.cacheKey).toHaveBeenCalledTimes(2);
+    // Exact-text keys are memoized across requests, so nothing is re-hashed.
+    expect(transforms.cacheKey).not.toHaveBeenCalled();
     expect(runUltraCompress).toHaveBeenCalledTimes(1);
   });
 
   it("leaves context unchanged on bridge failure and retries", async () => {
     const hooks = register(structuredClone(DEFAULT_SETTINGS));
-    const original: AgentLikeMessage[] = [{ role: "toolResult", content: [text(a)] }];
+    // A user message must exist for nextUser placement to carry the frames.
+    const original: AgentLikeMessage[] = [{ role: "user", content: "go" }, { role: "toolResult", content: [text(a)] }];
     vi.mocked(runUltraCompress).mockResolvedValueOnce({ ok: false, error: "unavailable" });
     expect(await hooks.context(structuredClone(original))).toBeUndefined();
     vi.mocked(runUltraCompress).mockResolvedValueOnce({ ok: true, data: { ops: [{ ...snap, message_index: 0 }] } });
-    expect((await hooks.context(structuredClone(original))).messages[0].content).not.toEqual(original[0].content);
+    expect((await hooks.context(structuredClone(original))).messages[1].content).not.toEqual(original[1].content);
     expect(runUltraCompress).toHaveBeenCalledTimes(2);
   });
 });

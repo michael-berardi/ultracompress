@@ -14,13 +14,15 @@ Install: copy or symlink this folder to $HERMES_HOME/plugins/ultracompress, then
 Settings: optional settings.json next to this file, for example
   {"mode": "deterministic", "threshold": 0.30}
   mode       deterministic (default) | builtin (behave exactly like Hermes' ContextCompressor)
-  threshold  compaction trigger as a fraction of the context window. Hermes' own compressor
-             raises anything under a 512k window to 75%; this engine honours the value as given,
-             because a deterministic compaction costs milliseconds, not a model call.
+  threshold  compaction trigger as a fraction of the context window. Unset means Hermes'
+             compression.threshold, then 0.30. Hermes' own compressor raises anything under a
+             512k window to 75%; this engine honours the value as given, because a deterministic
+             compaction costs milliseconds, not a model call.
   binary, archive_dir, timeout_seconds, tool_result_chars, reply_chars, replies_budget_chars,
   carry_users_chars: see DEFAULT_SETTINGS.
 Any UltraCompress failure is logged with its cause, and Hermes' built-in summary runs for that
-compaction instead.
+compaction instead. The condensed turns are archived before the CLI is called, so a failure costs
+the brief, never the raw history.
 """
 from __future__ import annotations
 
@@ -36,16 +38,17 @@ from typing import Any, Dict, List, Optional
 from agent.context_compressor import ContextCompressor
 
 from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, compose_brief,
-                      conversation_view, find_binary, section, tool_only_brief, BRIEF_HEADING, to_pi_entries)
+                      conversation_view, empty_window_brief, find_binary, section, tool_only_brief,
+                      turn_chars, BRIEF_HEADING, to_pi_entries)
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 logger = logging.getLogger("plugins.ultracompress")
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 SETTINGS_FILE = PLUGIN_DIR / "settings.json"
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "mode": "deterministic",
-    "threshold": 0.30,
+    "threshold": None,           # None = Hermes' compression.threshold, then 0.30
     "binary": "",                 # "" = $ULTRACOMPRESS_BIN, then the standard install locations
     "archive_dir": "",            # "" = $HERMES_HOME/ultracompress
     "timeout_seconds": 30,
@@ -54,6 +57,14 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "replies_budget_chars": 12000,
     "carry_users_chars": 4000,
 }
+
+
+def resolve_threshold(settings: Dict[str, Any], compression: Dict[str, Any]) -> float:
+    """The compaction trigger: the plugin setting when given, else Hermes' config, else 0.30.
+
+    A plugin default here would silently discard whatever `hermes config set compression.threshold`
+    asked for, so an unset setting has to stay unset all the way through."""
+    return float(settings.get("threshold") or compression.get("threshold") or 0.30)
 
 
 def load_settings() -> Dict[str, Any]:
@@ -108,7 +119,7 @@ class UltraCompressEngine(ContextCompressor):
         super().__init__(
             model=str(model.get("default") or model.get("model") or ""),
             provider=str(model.get("provider") or ""),
-            threshold_percent=float(self.uc_settings.get("threshold") or compression.get("threshold") or 0.30),
+            threshold_percent=resolve_threshold(self.uc_settings, compression),
             protect_first_n=int(compression.get("protect_first_n", 3)),
             protect_last_n=int(compression.get("protect_last_n", 20)),
             summary_target_ratio=float(compression.get("target_ratio", 0.20)),
@@ -130,30 +141,30 @@ class UltraCompressEngine(ContextCompressor):
         started = time.monotonic()
         try:
             brief, report = self._ultracompress_brief(turns_to_summarize)
+            from agent.context_compressor import _redact_compaction_text
+
+            previous = self._strip_summary_prefix(self._previous_summary or "")
+            replies = agent_replies_section(turns_to_summarize, previous,
+                                            per_reply=int(self.uc_settings["reply_chars"]),
+                                            total=int(self.uc_settings["replies_budget_chars"]))
+            summary = _redact_compaction_text(compose_brief(brief) + replies)
+            summary = self._augment_summary_lean(summary, turns_to_summarize)
+            summary = carry_forward_users(summary, previous, int(self.uc_settings["carry_users_chars"]))
+            prefixed = self._with_summary_prefix(summary)
         except Exception as exc:
             logger.warning("UltraCompress failed (%s); using Hermes' built-in summary for this compaction", exc)
             self.last_uc_report = {"ok": False, "error": str(exc)}
             return super()._generate_summary(turns_to_summarize, focus_topic, memory_context, bypass_cooldown)
-        self._archive(turns_to_summarize)
-        from agent.context_compressor import _redact_compaction_text
-
-        previous = self._strip_summary_prefix(self._previous_summary or "")
-        replies = agent_replies_section(turns_to_summarize, previous,
-                                        per_reply=int(self.uc_settings["reply_chars"]),
-                                        total=int(self.uc_settings["replies_budget_chars"]))
-        summary = _redact_compaction_text(compose_brief(brief) + replies)
-        summary = self._augment_summary_lean(summary, turns_to_summarize)
-        summary = carry_forward_users(summary, previous, int(self.uc_settings["carry_users_chars"]))
         self._previous_summary = summary
         self._clear_compression_failure_cooldown()
         self._last_summary_error = None
-        raw_chars = sum(len(json.dumps(t, ensure_ascii=False, default=str)) for t in turns_to_summarize)
         report.update(ok=True, ms=round((time.monotonic() - started) * 1000),
-                      raw_tokens_est=raw_chars // 3, summary_tokens_est=len(summary) // 3)
+                      raw_tokens_est=turn_chars(turns_to_summarize) // 3,
+                      summary_tokens_est=len(summary) // 3)
         self.last_uc_report = report
         logger.info("UltraCompress · %s turns (~%s tokens) → summary ~%s tokens · %s ms",
                     len(turns_to_summarize), report["raw_tokens_est"], report["summary_tokens_est"], report["ms"])
-        return self._with_summary_prefix(summary)
+        return prefixed
 
     def _binary(self) -> str:
         binary = find_binary(str(self.uc_settings.get("binary") or ""))
@@ -163,6 +174,9 @@ class UltraCompressEngine(ContextCompressor):
         return binary
 
     def _ultracompress_brief(self, turns: List[Dict[str, Any]]):
+        # Archive before anything can fail: a CLI that is missing, slow or broken costs the brief,
+        # never the raw history the recall tool depends on.
+        self._archive(turns)
         view = conversation_view(turns, int(self.uc_settings.get("tool_result_chars") or 0), _is_carrier)
         entries = to_pi_entries(view)
         previous_brief = ""
@@ -184,9 +198,12 @@ class UltraCompressEngine(ContextCompressor):
             raise RuntimeError(f"ultracompress exited {proc.returncode}: {proc.stderr.strip()[:300]}")
         out = json.loads(proc.stdout)
         brief = (out.get("summary") or "").strip()
+        report = dict(out.get("stats") or {})
         if not brief:
-            raise RuntimeError("ultracompress returned an empty summary")
-        return brief, dict(out.get("stats") or {})
+            # A window the CLI found nothing to summarise (no text of its own) says so locally; a
+            # model summary over it would cost a minute to produce nothing better.
+            return empty_window_brief(previous_brief), {**report, "emptyWindow": True}
+        return brief, report
 
     # ---- raw archive + recall -----------------------------------------------------------------
     def _archive_path(self) -> Path:
@@ -231,7 +248,8 @@ class UltraCompressEngine(ContextCompressor):
             "name": RECALL_TOOL,
             "description": ("Search the raw text of turns that context compaction removed from this conversation "
                             "(ranked keywords, or a regular expression). Use it when the compaction summary mentions "
-                            "something you need verbatim: the user's exact words, an id, a number, a tool result."),
+                            "something you need verbatim: the user's exact words, an id, a number, a tool result. "
+                            "A page holds up to 10 hits; the result says how many hits and pages there are."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -239,6 +257,8 @@ class UltraCompressEngine(ContextCompressor):
                     "regex": {"type": "boolean", "description": "Treat query as a regular expression."},
                     "role": {"type": "string", "enum": ["user", "assistant", "toolResult"],
                              "description": "Only search one role."},
+                    "page": {"type": "integer", "minimum": 1,
+                             "description": "Result page, 1-based. Read a later page when the result says there are more."},
                 },
                 "required": ["query"],
             },
@@ -247,28 +267,57 @@ class UltraCompressEngine(ContextCompressor):
     def handle_tool_call(self, name: str, args: Dict[str, Any], **kwargs) -> str:
         if name != RECALL_TOOL:
             return json.dumps({"error": f"unknown tool {name}"})
-        query = str((args or {}).get("query") or "").strip()
+        args = args or {}
+        query = str(args.get("query") or "").strip()
         if not query:
             return json.dumps({"error": "query is required"})
+        page = args.get("page")
+        if page is not None:
+            try:
+                page = int(page)
+            except (TypeError, ValueError):
+                return json.dumps({"error": "page must be a positive integer"})
+            if page < 1:
+                return json.dumps({"error": "page must be a positive integer"})
         path = self._archive_path()
         if not path.exists():
             return json.dumps({"result": "Nothing has been compacted in this conversation yet; it is all still in context."})
+        timeout = float(self.uc_settings.get("timeout_seconds") or 30)
         try:
             cmd = [self._binary(), "recall", "--session", str(path), "--scope", "all",
-                   "--query", query, "--max-output-bytes", "12000"]
+                   "--query", query, "--per-page", "10", "--max-output-bytes", "12000"]
         except RuntimeError as exc:
             return json.dumps({"error": str(exc)})
         if args.get("regex"):
             cmd.append("--regex")
         if args.get("role"):
             cmd += ["--role", str(args["role"])]
+        if page is not None:
+            cmd += ["--page", str(page)]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return json.dumps({"error": "recall timed out after 30 s"})
+            return json.dumps({"error": f"recall timed out after {timeout:g} s"})
+        except (OSError, UnicodeDecodeError) as exc:
+            return json.dumps({"error": f"recall could not run: {exc}"})
         if proc.returncode != 0:
             return json.dumps({"error": f"recall failed ({proc.returncode}): {proc.stderr.strip()[:300]}"})
-        return proc.stdout.strip() or json.dumps({"result": "no matches"})
+        text = proc.stdout.strip()
+        if not text:
+            return json.dumps({"result": "no matches"})
+        try:
+            result = json.loads(text)
+        except ValueError:
+            return text
+        if not isinstance(result, dict):
+            return text
+        hits = result.get("hits") or []
+        total = result.get("total", len(hits))
+        shown_page = result.get("page", page or 1)
+        pages = result.get("page_count", 1)
+        result["result"] = (f"{total} hit(s) over {pages} page(s); this is page {shown_page} with "
+                            f"{len(hits)} hit(s).")
+        return json.dumps(result)
 
     def get_status(self) -> Dict[str, Any]:
         status = super().get_status()

@@ -3,6 +3,7 @@ import {
   applyTransforms,
   cacheKey,
   collectCandidates,
+  frameData,
   nextUserIndex,
   snapFrameBlocks,
   snapTextReplacement,
@@ -31,7 +32,7 @@ const snapOp: SnapOp = {
   block_index: 0,
   head: "first lines",
   tail: "last lines",
-  frames: [{ id: "f1", width: 648, height: 968, pngBase64: "aGVsbG8=" }],
+  frames: [{ id: "f1", width: 648, height: 968, png_base64: "aGVsbG8=" }],
   tokens_before: 2631,
   tokens_after: 837,
 };
@@ -108,6 +109,44 @@ describe("applyTransforms", () => {
     const content = msgs[1].content as Array<Record<string, unknown>>;
     expect(content.some((b) => b.type === "image")).toBe(true);
   });
+
+  it("carries the core's snake_case frame payload into the image block", () => {
+    for (const placement of ["inline", "nextUser"] as const) {
+      const msgs = sessionWithToolResult("x".repeat(7000));
+      applyTransforms(msgs, new Map([["k", { op: snapOp, blocks: snapTextReplacement(snapOp) }]]), () => "k", placement);
+      const content = JSON.stringify(msgs);
+      expect(content).toContain('{"type":"image","data":"aGVsbG8=","mimeType":"image/png"}');
+    }
+  });
+
+  it("accepts the legacy camelCase frame payload", () => {
+    expect(frameData({ id: "f1", width: 1, height: 1, pngBase64: "bGVnYWN5" })).toBe("bGVnYWN5");
+    expect(frameData({ id: "f1", width: 1, height: 1, png_base64: "bmV3" })).toBe("bmV3");
+  });
+
+  it("leaves the block untouched when a frame carries no data", () => {
+    const broken = { ...snapOp, frames: [{ id: "f1", width: 1, height: 1 }] } as unknown as SnapOp;
+    for (const placement of ["inline", "nextUser"] as const) {
+      const msgs = sessionWithToolResult("x".repeat(7000));
+      const original = structuredClone(msgs);
+      const result = applyTransforms(msgs, new Map([["k", { op: broken, blocks: [] }]]), () => "k", placement);
+      expect(result.snapApplied).toBe(0);
+      expect(result.messages).toEqual(original);
+      expect(JSON.stringify(msgs)).not.toContain("image");
+    }
+  });
+
+  it("leaves the block untouched when no user message can carry the frames", () => {
+    const msgs: AgentLikeMessage[] = [
+      { role: "toolResult", content: [{ type: "text", text: "x".repeat(7000) }] },
+      { role: "assistant", content: "consumed" },
+    ];
+    expect(nextUserIndex(msgs, 0)).toBe(-1);
+    const original = structuredClone(msgs);
+    const result = applyTransforms(msgs, new Map([["k", { op: snapOp, blocks: [] }]]), () => "k", "nextUser");
+    expect(result.snapApplied).toBe(0);
+    expect(result.messages).toEqual(original);
+  });
 });
 
 describe("misc", () => {
@@ -137,9 +176,11 @@ describe("misc", () => {
     expect(cache.has("k0")).toBe(false);
   });
 
-  it("snapFrameBlocks prefix a caption", () => {
-    const blocks = snapFrameBlocks(snapOp);
+  it("snapFrameBlocks prefix a caption and carry frame data", () => {
+    const blocks = snapFrameBlocks(snapOp)!;
     expect(blocks[0].type).toBe("text");
-    expect(blocks[1].type).toBe("image");
+    expect(blocks[1]).toEqual({ type: "image", data: "aGVsbG8=", mimeType: "image/png" });
+    expect(snapFrameBlocks({ ...snapOp, frames: [] })).toBeNull();
+    expect(snapFrameBlocks({ ...snapOp, frames: [{ id: "f", width: 1, height: 1 }] })).toBeNull();
   });
 });

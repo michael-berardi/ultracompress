@@ -189,12 +189,7 @@ pub fn render_frames(text: &str, label: &str, cfg: &SnapConfig) -> SnapResult {
 
     let mut frames = Vec::with_capacity(grids.len());
     for (i, grid) in grids.iter().enumerate() {
-        let header = format!(
-            "── ultracompress frame {}/{} · {} · archived text, verbatim ──",
-            i + 1,
-            total,
-            label
-        );
+        let header = frame_header(i + 1, total, label);
         let mut buf = String::with_capacity(cfg.rows * (cfg.cols + 1));
         buf.push_str(&header);
         buf.push('\n');
@@ -236,6 +231,12 @@ pub fn render_frames(text: &str, label: &str, cfg: &SnapConfig) -> SnapResult {
         source_chars,
         archived_chars: omitted,
     }
+}
+
+/// First row of every frame. ASCII only: the embedded font has no
+/// box-drawing glyphs.
+fn frame_header(index: usize, total: usize, label: &str) -> String {
+    format!("-- ultracompress frame {index}/{total} | {label} | archived text, verbatim --")
 }
 
 fn clamp_boundary(s: &str, i: usize) -> usize {
@@ -375,6 +376,15 @@ mod tests {
             r.frames.len()
         );
         assert!(r.frames.iter().all(|f| f.width > 0 && f.height > 0));
+    }
+
+    #[test]
+    fn frame_header_is_drawable_ascii() {
+        // Every header character must have a glyph; anything else rendered
+        // as a placeholder inside the frame the model reads.
+        let header = frame_header(1, 3, "tool output");
+        assert!(header.chars().all(|c| c.is_ascii_graphic() || c == ' '));
+        assert!(header.contains("frame 1/3"));
     }
 
     #[test]

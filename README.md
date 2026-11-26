@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.6.5**. Install a prebuilt binary:
+Current CLI release: **0.7.0**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.5`).
+(for example `0.7.0`).
 
 ### From source
 
@@ -77,6 +77,13 @@ Do not load a standalone adapter if your host already bundles it.
 | VCC brief | Deterministic goal, file, decision, diagnostic, and transcript sections |
 | Snap frames | Rasterized tool text for supported vision-capable provider paths |
 
+The brief keeps the newest entries of every list (files, commits, failures)
+and stays bounded over repeated compactions. Tool names are matched across
+harnesses (`edit`, `Edit`, `patch`, `write_file`, `Bash`, `terminal`).
+Attached images (screenshots a tool returned) are counted toward the size of
+the kept tail from their pixel dimensions, so a screenshot-heavy session is
+cut to the same budget as a text-heavy one.
+
 Snap frames replace tool text only when line-aware economics clear the savings
 margin; otherwise the original text stays in context. Fresh tool results remain
 readable for the first model request that consumes them. Subsequent requests
@@ -118,6 +125,8 @@ the same way: one file, whole.
   cannot fit returns an error rather than silently dropping page members.
   Pages beyond the available results return an error, not repeated final-page hits.
 
+Keyword results are ranked with BM25 (repeats saturate, long messages are
+normalized) and weighted by how many of the query's terms a message matches.
 Results include session identity, effective scope/tip, search count and entry
 IDs. Prefer a narrow query and small page before explicitly widening.
 
@@ -163,10 +172,16 @@ The adapter creates `~/.pi/agent/ultracompress.json` with safe defaults:
     "placement": "nextUser",
     "providers": ["anthropic", "google"]
   },
-  "snapshot": { "enabled": true },
+  "snapshot": { "enabled": true, "maxCount": 10, "maxAgeDays": 14 },
+  "summaryMaxBytes": 16384,
   "debug": false
 }
 ```
+
+Pre-compaction snapshots are pruned to the newest `maxCount` and to `maxAgeDays`.
+`summaryMaxBytes` caps the brief of an automatic compaction (1024 to 65536);
+an explicit `/ultracompress` is never capped. The brief is deterministic, so
+free-text compaction instructions are not used; the adapter says so once.
 
 Set `overrideDefaultCompaction` to `false` to retain Pi's core compaction.
 The UltraCompress binary can be configured explicitly. Provider image payloads

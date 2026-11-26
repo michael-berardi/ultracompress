@@ -179,19 +179,22 @@ fn result_digest(text: &str, is_error: bool, max: usize) -> String {
 }
 
 fn tool_args_digest(name: &str, args: &serde_json::Value, max: usize) -> String {
-    match name {
-        "bash" => args
+    use crate::sections::{tool_kind, ToolKind};
+    match tool_kind(name) {
+        ToolKind::Shell => args
             .get("command")
+            .or_else(|| args.get("cmd"))
             .and_then(|c| c.as_str())
             .map(|c| format!("{:?}", truncate_chars(c, max.min(160))))
             .unwrap_or_else(|| "\"\"".into()),
-        "read" | "edit" | "write" => args
+        ToolKind::Read | ToolKind::Edit | ToolKind::Write => args
             .get("path")
             .or_else(|| args.get("file_path"))
+            .or_else(|| args.get("filePath"))
             .and_then(|p| p.as_str())
             .map(|p| format!("{p:?}"))
             .unwrap_or_default(),
-        _ => {
+        ToolKind::Other => {
             let s = args.to_string();
             if s == "null" {
                 String::new()
@@ -249,6 +252,15 @@ mod tests {
         assert!(joined.contains("[user] run the tests"));
         assert!(joined.contains("* bash \"cargo test\" (#1)"));
         assert!(joined.contains("→ test result: ok. 42 passed"));
+    }
+
+    #[test]
+    fn digests_other_harness_tool_names() {
+        let a = serde_json::json!({"file_path": "/p/a.rs", "old_string": "x".repeat(500)});
+        assert_eq!(tool_args_digest("Edit", &a, 220), "\"/p/a.rs\"");
+        let b = serde_json::json!({"command": "ls -la"});
+        assert_eq!(tool_args_digest("Bash", &b, 220), "\"ls -la\"");
+        assert_eq!(tool_args_digest("terminal", &b, 220), "\"ls -la\"");
     }
 
     #[test]

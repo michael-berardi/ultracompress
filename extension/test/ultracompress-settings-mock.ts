@@ -8,5 +8,6 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
     ...actual,
     loadSettings: vi.fn(() => structuredClone(actual.DEFAULT_SETTINGS)),
     resolveUltraCompressBin: vi.fn(() => "mock-ultracompress"),
+    isUltraCompressBinAvailable: vi.fn(() => true),
   };
 });

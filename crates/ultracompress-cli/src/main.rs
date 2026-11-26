@@ -173,21 +173,42 @@ fn parse_cli(args: &[String]) -> Cli {
 }
 
 /// Load entries either from --session or stdin `{ "entries": [...] }`.
+/// A session file is read once, line by line: the file is never held whole,
+/// image payloads are cut to their header as they arrive, and the previous
+/// summary is picked up in the same pass.
 fn load_entries(cli: &Cli) -> (Vec<serde_json::Value>, Option<u64>, Value) {
     if let Some(path) = &cli.session {
-        let raw = std::fs::read_to_string(path)
-            .unwrap_or_else(|e| die(&format!("cannot load session: {e}")));
-        let entries = raw
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
-            .filter(|v| {
-                matches!(
-                    v.get("type").and_then(|t| t.as_str()),
-                    Some("message") | Some("compaction")
-                )
-            })
-            .collect();
-        return (entries, None, Value::Null);
+        use std::io::BufRead;
+        let file =
+            std::fs::File::open(path).unwrap_or_else(|e| die(&format!("cannot load session: {e}")));
+        let mut entries = Vec::new();
+        let mut previous: Option<String> = None;
+        let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => die(&format!("cannot load session: {e}")),
+            }
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+                continue;
+            };
+            match v.get("type").and_then(|t| t.as_str()) {
+                Some("message") => ultracompress_core::model::trim_image_payloads(&mut v),
+                Some("compaction") => {
+                    previous = v.get("summary").and_then(|s| s.as_str()).map(String::from);
+                }
+                _ => continue,
+            }
+            entries.push(v);
+        }
+        let settings = match previous {
+            Some(summary) => json!({ "previousSummary": summary }),
+            None => Value::Null,
+        };
+        return (entries, None, settings);
     }
     let bytes = read_stdin().unwrap_or_else(|e| die(&e.to_string()));
     let mut v: serde_json::Value =
@@ -196,30 +217,19 @@ fn load_entries(cli: &Cli) -> (Vec<serde_json::Value>, Option<u64>, Value) {
     // full session inside the settings envelope throughout compaction.
     if let Some(entries) = v.as_object_mut().and_then(|obj| obj.remove("entries")) {
         let tb = v.get("tokensBefore").and_then(|t| t.as_u64());
-        let Value::Array(entries) = entries else {
+        let Value::Array(mut entries) = entries else {
             die("entries must be an array")
         };
+        drop(bytes);
+        entries
+            .iter_mut()
+            .for_each(ultracompress_core::model::trim_image_payloads);
         (entries, tb, v)
     } else if let Value::Array(entries) = v {
         (entries, None, Value::Null)
     } else {
         die("stdin JSON must be { \"entries\": [...] } or a message array")
     }
-}
-
-fn previous_summary(cli: &Cli) -> Option<String> {
-    if let Some(path) = &cli.session {
-        let raw = std::fs::read_to_string(path).ok()?;
-        let last = raw
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
-            .rfind(|v| v.get("type").and_then(|t| t.as_str()) == Some("compaction"))?;
-        return last
-            .get("summary")
-            .and_then(|s| s.as_str())
-            .map(String::from);
-    }
-    None
 }
 
 /// Adapter JSON settings are defaults; explicit CLI options take precedence.
@@ -270,8 +280,7 @@ fn main_plan(args: &[String], dry: bool) {
     let input = CompactInput {
         entries,
         tokens_before,
-        previous_summary: stdin_setting(&settings, "previousSummary")
-            .or_else(|| previous_summary(&cli)),
+        previous_summary: stdin_setting(&settings, "previousSummary"),
         policy: cli.policy,
         keep_user_turns: cli.keep,
         smart_keep_tail: cli.smart,
