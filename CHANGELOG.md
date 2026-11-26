@@ -1,9 +1,11 @@
 # Changelog
 
-## 0.8.0 (2026-11-26) — Update notice and verified self-update
+## 0.8.0 (2026-11-26) — Update notice, verified self-update, private local storage
 
-CLI and core 0.8.0, Pi adapter 0.7.0. The Claude Code plugin (0.6.1) and the
-Hermes engine (0.6.0) are unchanged.
+CLI and core 0.8.0, Pi adapter 0.7.0, Hermes engine 0.6.1. The Claude Code
+plugin (0.6.1) is unchanged apart from a privacy note in its README.
+
+Updates
 
 - After an interactive command, the CLI says when a newer stable release
   exists, at most once a day per version, in two lines on stderr. The check is
@@ -22,7 +24,28 @@ Hermes engine (0.6.0) are unchanged.
 - Pi adapter 0.7.0: a footer line in interactive sessions and
   `/ultracompress-update` (`check`, `skip`, `auto on|off|status`);
   `checkForUpdates: false` hides the line.
-- New [PRIVACY.md](PRIVACY.md) and [docs/updates.md](docs/updates.md).
+- New [docs/updates.md](docs/updates.md).
+
+Privacy
+
+- New [PRIVACY.md](PRIVACY.md): the update check, installers, what your model
+  provider receives, and every local file with its location, limit and how to
+  delete it. The README keeps a short summary; the Claude Code and Hermes
+  READMEs gained a privacy note.
+- Pi snapshots and settings use `0700` directories and `0600` files, and a
+  loose pre-existing snapshot directory is tightened. Snapshot retention also
+  keeps the total within 64 MiB, dropping the oldest first (the newest is kept
+  even if it alone is larger), on top of `maxCount` and `maxAgeDays`.
+- Pi's optional debug dump moved from a shared temp-folder file to one
+  overwritten `0600` file in the private state directory
+  (`~/.local/state/ultracompress`, or `$XDG_STATE_HOME`).
+- Hermes 0.6.1: the raw recall archive uses a `0700` directory and a `0600`
+  file and keeps the newest whole entries within `archive_max_bytes` (64 MiB by
+  default). Entries are split on newlines only, so text holding U+2028 is never
+  cut, and the newest entry is always kept.
+- Regression tests reject telemetry packages and endpoints, allow exactly one
+  network endpoint (the update check), and check checksum-verified installers,
+  private storage and bounded retention.
 
 ## 0.7.1 (2026-11-26) — The summary budget keeps the newest lines
 

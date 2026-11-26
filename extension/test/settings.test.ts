@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS,
   isUltraCompressBinAvailable,
+  loadSettings,
   mergeSettings,
   moduleDir,
   packageVersion,
@@ -55,6 +56,15 @@ describe("settings", () => {
   it("decodes percent-encoded module paths", () => {
     const dir = path.join(os.tmpdir(), "uc dir with spaces");
     expect(moduleDir(pathToFileURL(path.join(dir, "settings.ts")).href)).toBe(dir);
+  });
+
+  it("scaffolds settings privately", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ultracompress-settings-"));
+    scratch.push(dir);
+    const file = path.join(dir, "agent", "ultracompress.json");
+    loadSettings(file);
+    expect(fs.statSync(path.join(dir, "agent")).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
 
   it("reports the package version from package.json", () => {

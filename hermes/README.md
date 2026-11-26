@@ -73,6 +73,7 @@ Optional `settings.json` next to `__init__.py`:
 | `threshold` | unset | Compaction trigger as a fraction of the context window. Unset means Hermes' `compression.threshold`, and 0.30 when that is unset too |
 | `binary` | `""` | Explicit path to `ultracompress` |
 | `archive_dir` | `""` | Raw archive location; empty means `$HERMES_HOME/ultracompress` |
+| `archive_max_bytes` | `67108864` | Keep the newest whole entries in the raw archive within this byte budget |
 | `tool_result_chars` | `0` | Characters of each tool result to include in the brief (0 = none) |
 | `reply_chars` / `replies_budget_chars` | `1200` / `12000` | Size of each reply excerpt and of the whole replies section |
 | `carry_users_chars` | `4000` | Earlier windows' verbatim user quotes kept in later summaries |
@@ -134,6 +135,15 @@ download their default tools into it (several minutes, over 1 GB) and rewrite th
 `.hermes/bin` launchers to use that temporary Python. The tests put the launchers back on
 teardown, but a run killed before teardown leaves `hermes` broken. Copy `.hermes/bin` before
 running them, and give the run time to finish.
+
+## Privacy
+
+This adapter runs the local binary; it sends no data itself and has no telemetry.
+The raw recall archive is stored at `$HERMES_HOME/ultracompress/<session>.jsonl`,
+in a `0700` directory as a `0600` file, bounded to `archive_max_bytes` (64 MiB by
+default). Delete it with `rm -rf "$HERMES_HOME/ultracompress"`. Your model
+provider still receives the prompts Hermes sends it. The binary runs without a
+terminal here, so its update check never runs. Details: [PRIVACY.md](../PRIVACY.md).
 
 ## Uninstall
 

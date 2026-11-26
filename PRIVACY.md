@@ -1,8 +1,11 @@
 # Privacy
 
-UltraCompress runs on your machine. It sends no telemetry, has no account, and
-compaction, recall and snap frames make no network call. The model requests
-before and after compaction are made by your agent host, not by UltraCompress.
+UltraCompress runs on your machine. It has no account and sends no telemetry,
+analytics, crash reports, unique install IDs or machine fingerprints; no
+dependency with its own telemetry is part of it. Compaction, recall and snap
+frames make no network call: the CLI reads the session file or stdin you give
+it, writes JSON to stdout and errors to stderr. The only request it makes is
+the update check below.
 
 ## The update check
 
@@ -26,7 +29,23 @@ The CLI makes one kind of request: a check for a newer release.
 An update downloads the release archive and its `SHA256SUMS` from the same
 GitHub release. Nothing about you is sent with those downloads either.
 
+## Installers
+
+When **you** run an installer, it downloads the release archive and
+`SHA256SUMS` from GitHub over HTTPS, verifies the SHA-256 before installing,
+and sends no usage data. The macOS binary is also signed and notarized.
+
+## Your model provider
+
+Your agent host may send data to a model provider you configured: prompts go to
+that provider as usual, including the requests before and after compaction, and
+snap-frame PNGs generated locally go to it when snap frames are enabled on a
+supported provider. UltraCompress chooses no provider and contacts none itself.
+The badges on the README are fetched by the site rendering it, not by the tool.
+
 ## Files on your machine
+
+### The CLI's update files
 
 | File | Contents |
 | --- | --- |
@@ -44,3 +63,29 @@ written atomically and readable only by you. Downloads go to a temporary folder
 that is deleted whether the update succeeds or fails.
 
 `ultracompress update --clean` removes all of these files.
+
+### Agent adapters
+
+- **Pi** writes `~/.pi/agent/ultracompress.json` (settings) and full
+  pre-compaction snapshots in `<project>/.steak-pi/snaps/`. Snapshots can
+  contain session text. Directories are `0700` and files `0600`. The newest
+  `snapshot.maxCount` snapshots (10 by default) from the last
+  `snapshot.maxAgeDays` days (14) are kept, within 64 MiB in total; the oldest
+  go first, and the newest is kept even if it alone is larger. The folder is
+  inside your project, so add `.steak-pi/` to its `.gitignore`. Delete them
+  with `rm -rf <project>/.steak-pi/snaps` and `rm ~/.pi/agent/ultracompress.json`.
+- With `debug: true`, **Pi** overwrites one diagnostics file at
+  `~/.local/state/ultracompress/debug.json` (`$XDG_STATE_HOME` overrides the
+  state root). It is `0600` in a `0700` directory and can contain a short
+  summary preview. Delete it with `rm -rf ~/.local/state/ultracompress`.
+- **Claude Code**: the plugin reads the local transcript and writes no files of
+  its own; the transcript and logs belong to Claude Code.
+- **Hermes** writes condensed turns, including tool output, to
+  `$HERMES_HOME/ultracompress/<session>.jsonl` for recall. The directory is
+  `0700`, the file `0600`, and the newest whole entries within 64 MiB are kept
+  (the newest entry is kept even if it alone is larger). Set
+  `archive_max_bytes` in the adapter's `settings.json` to change the budget.
+  Delete the archive with `rm -rf "$HERMES_HOME/ultracompress"`.
+
+To remove an install, run `ultracompress update --clean`, then delete
+`~/.ultracompress` (or `%LOCALAPPDATA%\UltraCompress`) and the shim.

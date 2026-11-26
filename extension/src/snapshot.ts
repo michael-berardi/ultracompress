@@ -5,8 +5,10 @@ import * as path from "node:path";
  * Pre-compaction snapshots — the safety net Instant Snap provided, now built
  * into UltraCompress. Before every compaction the full session state is
  * serialized to .steak-pi/snaps/ so pre-compaction state is always
- * restorable, then retained within count and age limits. One local write at
- * snap time; failure never blocks compaction.
+ * restorable, then retained within count, age and size limits. Snapshots hold
+ * full session text, so the directories are owner-only (0700) and the files
+ * owner-only (0600). One local write at snap time; failure never blocks
+ * compaction.
  *
  * writeSnapEntries streams the JSON to disk entry by entry. Serializing the
  * whole session with one JSON.stringify call breaks once the payload crosses
@@ -23,6 +25,29 @@ export interface SnapshotRetention {
 }
 
 export const DEFAULT_SNAPSHOT_RETENTION: SnapshotRetention = { maxCount: 10, maxAgeDays: 14 };
+
+/** Total bytes of snapshots kept per project; the newest is kept even if it alone is larger. */
+export const MAX_SNAPS_BYTES = 64 * 1024 * 1024;
+
+/** Create/claim the snapshot directories as owner-only, even if they pre-existed with looser modes. */
+function privateSnapDir(cwd: string): string {
+  const state = path.join(cwd, STATE_DIR);
+  const dir = path.join(state, SNAPS_DIR);
+  for (const target of [state, dir]) {
+    fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+    try {
+      fs.chmodSync(target, 0o700);
+    } catch {}
+  }
+  return dir;
+}
+
+/** Open-time 0o600 only applies to new files; also tighten a file that already existed. */
+function makePrivate(file: string): void {
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {}
+}
 
 /** Invalid limits fall back to bounded defaults, never unlimited retention. */
 export function normalizeSnapshotRetention(raw: Partial<SnapshotRetention>): SnapshotRetention {
@@ -46,9 +71,18 @@ function snapshotCreatedAt(name: string): number | null {
 /**
  * Prune only regular, canonically named snapshots in this cwd. Filename dates
  * avoid parsing conversation payloads (or trusting paths in their metadata).
+ * Walking newest first, a snapshot is kept while it is within the count and
+ * age limits and the bytes kept so far fit `maxBytes`; once the size budget is
+ * exceeded every older snapshot goes too, so the oldest are always dropped
+ * first. The newest snapshot is never dropped for size alone.
  * A failed delete is reported and does not prevent other expired files going.
  */
-export function pruneSnaps(cwd: string, nowMs: number, retention = DEFAULT_SNAPSHOT_RETENTION): string[] {
+export function pruneSnaps(
+  cwd: string,
+  nowMs: number,
+  retention = DEFAULT_SNAPSHOT_RETENTION,
+  maxBytes = MAX_SNAPS_BYTES,
+): string[] {
   const limits = normalizeSnapshotRetention(retention);
   const state = path.join(cwd, STATE_DIR);
   const dir = path.join(state, SNAPS_DIR);
@@ -61,11 +95,22 @@ export function pruneSnaps(cwd: string, nowMs: number, retention = DEFAULT_SNAPS
     const candidates = fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
       if (!entry.isFile()) return [];
       const createdAt = snapshotCreatedAt(entry.name);
-      return createdAt === null ? [] : [{ file: entry.name, createdAt }];
+      if (createdAt === null) return [];
+      let bytes = 0;
+      try {
+        bytes = fs.lstatSync(path.join(dir, entry.name)).size;
+      } catch {}
+      return [{ file: entry.name, createdAt, bytes }];
     }).sort((a, b) => b.createdAt - a.createdAt);
     const cutoff = nowMs - limits.maxAgeDays * 86_400_000;
+    let keptBytes = 0;
+    let overBudget = false;
     for (const [index, candidate] of candidates.entries()) {
-      if (index < limits.maxCount && candidate.createdAt >= cutoff) continue;
+      if (!overBudget && index > 0 && keptBytes + candidate.bytes > maxBytes) overBudget = true;
+      if (!overBudget && index < limits.maxCount && candidate.createdAt >= cutoff) {
+        keptBytes += candidate.bytes;
+        continue;
+      }
       try {
         fs.unlinkSync(path.join(dir, candidate.file));
         removed.push(candidate.file);
@@ -136,11 +181,11 @@ export function writeSnapEntries(cwd: string, entries: unknown[], reason: string
     entries: entries.length,
     compactor: "ultracompress",
   };
-  const dir = path.join(cwd, STATE_DIR, SNAPS_DIR);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = privateSnapDir(cwd);
   const file = path.join(dir, meta.file);
-  const fd = fs.openSync(file, "w");
+  const fd = fs.openSync(file, "w", 0o600);
   try {
+    makePrivate(file);
     writeAll(fd, `{"snap":${JSON.stringify(meta)},"entries":[`);
     for (let i = 0; i < entries.length; i++) {
       if (i > 0) writeAll(fd, ",");
@@ -193,10 +238,10 @@ function stringifySnapEntry(entry: unknown, index: number): string {
 }
 
 export function writeSnap(cwd: string, payload: string, fileName: string, retention = DEFAULT_SNAPSHOT_RETENTION, nowMs = Date.now()): string {
-  const dir = path.join(cwd, STATE_DIR, SNAPS_DIR);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = privateSnapDir(cwd);
   const file = path.join(dir, fileName);
-  fs.writeFileSync(file, payload);
+  fs.writeFileSync(file, payload, { mode: 0o600 });
+  makePrivate(file);
   pruneSnaps(cwd, nowMs, retention);
   return file;
 }

@@ -109,6 +109,36 @@ describe("synthetic snapshot retention", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining(blocked), expect.objectContaining({ code: "EACCES" }));
   });
 
+  it("writes owner-only snapshots and tightens loose pre-existing directories", () => {
+    fs.chmodSync(path.join(cwd, ".steak-pi"), 0o777);
+    fs.chmodSync(dir, 0o777);
+    const streamed = writeSnapEntries(cwd, [{ text: "synthetic private state" }], "threshold", NOW);
+    const legacy = buildSnap([], "legacy writer", NOW + 1);
+    const legacyFile = writeSnap(cwd, legacy.payload, legacy.meta.file, undefined, NOW + 1);
+    expect(fs.statSync(path.join(cwd, ".steak-pi")).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(path.join(dir, streamed.file)).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(legacyFile).mode & 0o777).toBe(0o600);
+  });
+
+  it("drops the oldest snapshots first once the size budget is exceeded", () => {
+    const small = seed(NOW - 3000, "x".repeat(100));
+    const large = seed(NOW - 2000, "x".repeat(4000));
+    const newer = seed(NOW - 1000, "x".repeat(4000));
+    // The budget fits the two newest; everything older goes, even a small file that would fit.
+    expect(pruneSnaps(cwd, NOW, undefined, 8050)).toEqual([small]);
+    expect(snapshots().sort()).toEqual([large, newer].sort());
+    expect(pruneSnaps(cwd, NOW, undefined, 4000)).toEqual([large]);
+    expect(snapshots()).toEqual([newer]);
+  });
+
+  it("keeps the newest snapshot even when it alone exceeds the size budget", () => {
+    const older = seed(NOW - 2000, "x".repeat(10));
+    const newest = seed(NOW - 1000, "x".repeat(5000));
+    expect(pruneSnaps(cwd, NOW, undefined, 100)).toEqual([older]);
+    expect(snapshots()).toEqual([newest]);
+  });
+
   it("counts retained snapshots from directory entries without reading contents", () => {
     for (let i = 1; i <= 3; i++) seed(NOW - i * 1000);
     fs.writeFileSync(path.join(dir, "notes.json"), "ignore");

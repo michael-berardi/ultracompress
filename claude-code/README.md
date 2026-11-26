@@ -117,6 +117,13 @@ If you ran it with `--plugin-dir`, it was never installed — the next session
 without the flag is already clean. Remove `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`
 from `~/.claude/settings.json` only if nothing else uses function hooks.
 
+## Privacy
+
+This plugin runs the local binary on this session's transcript; it sends no data
+itself, has no telemetry and writes no files of its own. The binary's update
+check never runs inside Claude Code. Claude Code's own network calls, transcript
+and logs are controlled by Claude Code. Details: [PRIVACY.md](../PRIVACY.md).
+
 ## UltraTerm users
 
 UltraTerm ships this plugin already, wired to its managed binary. If UltraTerm

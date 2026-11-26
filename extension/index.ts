@@ -1,8 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { writeFileSync } from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { runUltraCompress } from "./src/bridge";
+import { writeDebug } from "./src/debug";
 import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
 import {
   isUltraCompressBinAvailable,
@@ -103,7 +101,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const dbg = (data: Record<string, unknown>) => {
     if (!settings.debug) return;
     try {
-      writeFileSync(path.join(os.tmpdir(), "ultracompress-debug.json"), JSON.stringify(data, null, 2));
+      writeDebug(data);
     } catch (error) {
       if (debugWriteFailed) return;
       debugWriteFailed = true;

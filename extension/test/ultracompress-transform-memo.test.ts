@@ -10,7 +10,10 @@ import { snapFileName } from "../src/snapshot.ts";
 
 vi.mock("../src/bridge.ts", () => ({ runUltraCompress: vi.fn() }));
 
-const DEBUG_FILE = path.join(os.tmpdir(), "ultracompress-debug.json");
+// The debug dump lives in the private state directory; point it at a scratch root.
+let stateHome: string;
+let previousStateHome: string | undefined;
+let DEBUG_FILE: string;
 const text = (value: string) => ({ type: "text", text: value });
 const long = "L".repeat(7000);
 const messages = () => [
@@ -53,10 +56,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isUltraCompressBinAvailable).mockReturnValue(true);
   vi.mocked(runUltraCompress).mockReset();
-  fs.rmSync(DEBUG_FILE, { recursive: true, force: true });
+  previousStateHome = process.env.XDG_STATE_HOME;
+  stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "uc-state-"));
+  process.env.XDG_STATE_HOME = stateHome;
+  DEBUG_FILE = path.join(stateHome, "ultracompress", "debug.json");
 });
 afterEach(() => {
-  fs.rmSync(DEBUG_FILE, { recursive: true, force: true });
+  if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+  else process.env.XDG_STATE_HOME = previousStateHome;
+  fs.rmSync(stateHome, { recursive: true, force: true });
 });
 
 describe("skipping the CLI when it cannot help", () => {
@@ -175,16 +183,18 @@ describe("compaction result", () => {
 });
 
 describe("debug log", () => {
-  it("writes to the OS temp dir when debug is on", async () => {
+  it("writes an owner-only file in the private state directory when debug is on", async () => {
     const hooks = register({ debug: true });
     vi.mocked(runUltraCompress).mockResolvedValue({ ok: false, error: "synthetic failure" });
     await hooks.context();
     const written = JSON.parse(fs.readFileSync(DEBUG_FILE, "utf8")) as { transformError: string };
     expect(written.transformError).toBe("synthetic failure");
+    expect(fs.statSync(DEBUG_FILE).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.dirname(DEBUG_FILE)).mode & 0o777).toBe(0o700);
   });
 
   it("reports a write failure once and keeps the session running", async () => {
-    fs.mkdirSync(DEBUG_FILE); // writing a file at this path now fails with EISDIR
+    fs.mkdirSync(DEBUG_FILE, { recursive: true }); // writing a file at this path now fails with EISDIR
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const hooks = register({ debug: true });
     vi.mocked(runUltraCompress).mockResolvedValue({ ok: false, error: "synthetic failure" });
@@ -194,7 +204,6 @@ describe("debug log", () => {
     expect(errors).toHaveBeenCalledTimes(1);
     expect(String(errors.mock.calls[0][0])).toContain("[ultracompress] debug write failed");
     errors.mockRestore();
-    fs.rmSync(DEBUG_FILE, { recursive: true, force: true });
   });
 
   it("stays silent when debug is off", async () => {

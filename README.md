@@ -55,10 +55,11 @@ and JSON output never show it. Details: [docs/updates.md](docs/updates.md).
 
 ## Privacy
 
-UltraCompress sends no telemetry and compaction makes no network call. The only
-request is the update check: one anonymous GET to this project's public GitHub
-release record, at most once a day, never from hooks or CI. Turn it off with
-`ULTRACOMPRESS_NO_UPDATE_CHECK=1`. Details: [PRIVACY.md](PRIVACY.md).
+No telemetry. Compaction, recall and snap frames make no network call; the only
+request is an anonymous update check, at most daily, never from hooks or CI
+(off: `ULTRACOMPRESS_NO_UPDATE_CHECK=1`). Stored locally, owner-only and bounded:
+settings, update state, Pi snapshots and the Hermes recall archive. Remove them
+with `ultracompress update --clean` and the folders listed in [PRIVACY.md](PRIVACY.md).
 
 ## First use
 
@@ -196,7 +197,8 @@ The adapter creates `~/.pi/agent/ultracompress.json` with safe defaults:
 }
 ```
 
-Pre-compaction snapshots are pruned to the newest `maxCount` and to `maxAgeDays`.
+Pre-compaction snapshots are pruned to the newest `maxCount`, to `maxAgeDays` and to
+64 MiB in total; they are owner-only and can contain session text (see [PRIVACY.md](PRIVACY.md)).
 `summaryMaxBytes` is the size budget for the brief of an automatic compaction
 (1024 to 65536). The CLI fits it by dropping the oldest transcript lines, so
 the sections and the newest lines stay (`--summary-max-bytes` on the command

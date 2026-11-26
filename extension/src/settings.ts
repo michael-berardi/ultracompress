@@ -89,6 +89,18 @@ function isPolicy(v: unknown): v is UltraCompressSettings["policy"] {
   return v === "auto" || v === "vcc" || v === "snap";
 }
 
+/** Config can name binaries and paths; keep it owner-only. */
+function writeSettingsFile(settingsPath: string, settings: UltraCompressSettings): void {
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(path.dirname(settingsPath), 0o700);
+  } catch {}
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
+  try {
+    fs.chmodSync(settingsPath, 0o600);
+  } catch {}
+}
+
 /** Load settings, scaffolding the file with defaults on first run. */
 export function loadSettings(settingsPath = SETTINGS_PATH): UltraCompressSettings {
   try {
@@ -99,16 +111,14 @@ export function loadSettings(settingsPath = SETTINGS_PATH): UltraCompressSetting
     if (settingsPath === SETTINGS_PATH) {
       try {
         const migrated = mergeSettings(JSON.parse(fs.readFileSync(LEGACY_SETTINGS_PATH, "utf8")));
-        fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-        fs.writeFileSync(settingsPath, JSON.stringify(migrated, null, 2) + "\n");
+        writeSettingsFile(settingsPath, migrated);
         return migrated;
       } catch {
         // no legacy config — scaffold defaults below
       }
     }
     try {
-      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify(DEFAULT_SETTINGS, null, 2) + "\n");
+      writeSettingsFile(settingsPath, DEFAULT_SETTINGS);
     } catch {
       // read-only environments still work with in-memory defaults
     }
