@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.2 (2026-11-26) — Update install hardening
+
+All adapters are aligned at 0.7.2, above the published `v0.7.1` tag, so the
+release check no longer treats an already-superseded release as available.
+
+- Fixed B5a: download, archive and unpacked staging under the shared cache are
+  removed after both a successful and a failed install. Checksum verification,
+  the single rollback copy and the bounded install log remain unchanged.
+- Fixed B5b: a Cargo-managed install is directed to `cargo install ... --version
+  <new version>` rather than the version currently running.
+- Fixed B5c: the opt-in auto-install worker runs through `nice -n 10` where
+  supported, with a direct spawn fallback.
+- Fixed B5d: an exclusive in-flight claim in the shared cache prevents quick
+  successive commands from starting more than one anonymous check.
+
 ## 0.6.8 (2026-11-26) — Shared update cache
 
 CLI, core, Pi, Claude Code and Hermes adapters are all at 0.6.8.

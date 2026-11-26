@@ -21,13 +21,13 @@ class HermesUpdateTest(unittest.TestCase):
         self.path = Path(self.temp.name, "cache", "update.json")
 
     def test_version_comparison_and_stable_releases(self):
-        self.assertTrue(UPDATE.is_newer("0.6.9", UPDATE.VERSION))
+        self.assertTrue(UPDATE.is_newer("0.7.3", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("0.6.8", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("garbage", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("0.6.8-rc.1", UPDATE.VERSION))
-        release = UPDATE.parse_release(json.dumps({"tag_name": "v0.6.9", "draft": False,
+        release = UPDATE.parse_release(json.dumps({"tag_name": "v0.7.3", "draft": False,
                                                    "prerelease": False, "body": "A\n\nB"}))
-        self.assertEqual(release, {"version": "0.6.9", "notes": "A\nB"})
+        self.assertEqual(release, {"version": "0.7.3", "notes": "A\nB"})
         with self.assertRaises(ValueError):
             UPDATE.parse_release(json.dumps({"tag_name": "v0.6.8", "prerelease": True}))
         with self.assertRaises(ValueError):
@@ -54,13 +54,13 @@ class HermesUpdateTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.path.parent.stat().st_mode), 0o700)
         calls = []
-        cached = UPDATE.run_check(state, self.path, lambda: calls.append(1) or {"version": "0.6.9", "notes": ""})
+        cached = UPDATE.run_check(state, self.path, lambda: calls.append(1) or {"version": "0.7.3", "notes": ""})
         self.assertEqual(calls, [])
         self.assertEqual(cached["last_error"], "upstream unavailable")
         self.assertTrue(UPDATE.check_due(cached, cached["checked_at"] + UPDATE.CHECK_INTERVAL + 1))
 
     def test_notice_frequency_skip_and_report(self):
-        release = {"version": "0.6.9", "notes": "notes"}
+        release = {"version": "0.7.3", "notes": "notes"}
         state = dict(UPDATE.DEFAULT_STATE)
         now = 1_700_000_000.0
         self.assertTrue(UPDATE.showable(state, release, UPDATE.VERSION, now))
@@ -69,9 +69,9 @@ class HermesUpdateTest(unittest.TestCase):
         self.assertTrue(UPDATE.showable(state, release, UPDATE.VERSION, now + UPDATE.CHECK_INTERVAL))
         UPDATE.skip(state, release["version"])
         self.assertFalse(UPDATE.showable(state, release, UPDATE.VERSION, now + UPDATE.CHECK_INTERVAL * 2))
-        self.assertTrue(UPDATE.showable(state, {"version": "0.7.0", "notes": ""}, UPDATE.VERSION, now))
+        self.assertTrue(UPDATE.showable(state, {"version": "0.7.4", "notes": ""}, UPDATE.VERSION, now))
         text = UPDATE.notice(release, UPDATE.VERSION)
-        self.assertIn(f"ultracompress 0.6.9 available (you have {UPDATE.VERSION})", text)
+        self.assertIn(f"ultracompress 0.7.3 available (you have {UPDATE.VERSION})", text)
         self.assertIn("update --auto on", text)
         self.assertIn("update --skip", text)
         self.assertNotIn("notes", text)

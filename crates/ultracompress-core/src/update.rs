@@ -7,7 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One check per 24 h per machine, and one notice per 24 h per version.
@@ -19,6 +21,10 @@ pub const CHECK_TIMEOUT_SECS: u64 = 4;
 /// Fixed, anonymous user agent: no id, version, usage or machine data.
 pub const USER_AGENT: &str = "ultracompress-update-check";
 pub const OPT_OUT_ENV: &str = "ULTRACOMPRESS_NO_UPDATE_CHECK";
+/// Exclusive, short-lived marker for one check in flight across processes.
+pub const CHECK_CLAIM_FILE: &str = "check.claim";
+/// Well past the four-second request ceiling, so a dead worker is reclaimable.
+pub const CHECK_CLAIM_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Version {
@@ -229,6 +235,97 @@ pub fn cache_path() -> PathBuf {
 
 pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
+}
+
+pub fn claim_path() -> PathBuf {
+    cache_dir().join(CHECK_CLAIM_FILE)
+}
+
+/// Held for the duration of one anonymous check. Dropping it releases the
+/// claim only if it is still ours, so reclaiming a stale claim cannot erase
+/// the newer owner's marker.
+pub struct CheckClaim {
+    path: PathBuf,
+    token: String,
+}
+
+impl Drop for CheckClaim {
+    fn drop(&mut self) {
+        let ours = std::fs::read_to_string(&self.path).map(|body| body.trim() == self.token);
+        if matches!(ours, Ok(true)) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn create_claim(path: &Path, token: &str) -> std::io::Result<CheckClaim> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(err) = file.set_permissions(std::fs::Permissions::from_mode(0o600)) {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(err);
+        }
+    }
+    if let Err(err) = file.write_all(token.as_bytes()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(err);
+    }
+    Ok(CheckClaim {
+        path: path.to_path_buf(),
+        token: token.to_string(),
+    })
+}
+
+fn claim_is_stale(path: &Path, now: u64) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|body| {
+            let stamp = body.split_whitespace().next()?.parse::<u64>().ok()?;
+            Some(now.abs_diff(stamp) >= CHECK_CLAIM_TTL_SECS)
+        })
+        .unwrap_or(true)
+}
+
+/// Claim the one in-flight check. A missing, malformed or expired marker is
+/// recyclable; a live claim returns `None`. The atomic `create_new` keeps two
+/// processes from both winning. No identifiers are stored, only a timestamp
+/// and process id.
+pub fn claim_check(path: &Path, now: u64) -> Option<CheckClaim> {
+    let token = format!("{now} {}", std::process::id());
+    match create_claim(path, &token) {
+        Ok(claim) => Some(claim),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !claim_is_stale(path, now) {
+                return None;
+            }
+            // Move the dead marker aside first: only one recycler wins the
+            // rename, so a second process cannot delete our fresh claim.
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(CHECK_CLAIM_FILE);
+            let stale_path = path.with_file_name(format!("{name}.stale-{}", std::process::id()));
+            if std::fs::rename(path, &stale_path).is_ok() {
+                let _ = std::fs::remove_file(&stale_path);
+            }
+            match create_claim(path, &token) {
+                Ok(claim) => Some(claim),
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !claim_is_stale(path, now) {
+                        return None;
+                    }
+                    let _ = std::fs::remove_file(path);
+                    create_claim(path, &token).ok()
+                }
+                Err(_) => None,
+            }
+        }
+        Err(_) => None,
+    }
 }
 
 /// Atomic, owner-only write. A partial file is never visible to another process.
@@ -655,6 +752,37 @@ mod tests {
                 0o600
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn in_flight_claim_is_exclusive_and_released() {
+        let dir = std::env::temp_dir().join(format!("uc-claim-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(CHECK_CLAIM_FILE);
+        let now = 1_700_000_000;
+        {
+            let claim = claim_check(&path, now).expect("first claim wins");
+            assert!(path.exists());
+            assert!(claim_check(&path, now).is_none());
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap().trim(),
+                format!("{now} {}", std::process::id())
+            );
+            drop(claim);
+        }
+        assert!(!path.exists(), "released claim is removed");
+        {
+            std::fs::write(&path, format!("{} 4242", now - CHECK_CLAIM_TTL_SECS)).unwrap();
+            let claim = claim_check(&path, now).expect("stale claim is reclaimable");
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap().trim(),
+                format!("{now} {}", std::process::id())
+            );
+            drop(claim);
+        }
+        assert!(!path.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

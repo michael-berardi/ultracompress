@@ -21,7 +21,9 @@ The check has a four-second ceiling and runs after your command has finished
 Pi session-start hook). It never sits on a startup path in front of your work.
 The result is cached atomically in a `0600` file in the platform cache
 directory; a failed check records its cause there, is never printed as noise,
-and is not retried in a loop.
+and is not retried in a loop. An exclusive, short-lived claim file in the same
+directory means quick successive commands share one in-flight check instead of
+starting several anonymous requests.
 
 ### One shared cache
 
@@ -71,7 +73,7 @@ A notice appears at most once per 24 hours per version. Skipping a version
 hides that version only; a newer release notifies again. The notice reads:
 
 ```text
-ultracompress 0.6.9 available (you have 0.6.8) · run: ultracompress update
+ultracompress 0.7.3 available (you have 0.7.2) · run: ultracompress update
 turn on automatic updates: ultracompress update --auto on · skip: ultracompress update --skip
 ```
 
@@ -89,15 +91,20 @@ it survives updates. When it is on, a discovered release is installed in a
 detached, low-priority worker; the new binary applies on the next start. The
 worker writes to `install.log` in the update cache directory. That log is one
 bounded file (256 KB maximum; the oldest lines are dropped), written `0600`.
-A failure leaves the current binary working, records the cause, and falls back
-to the notice. An environment variable never turns auto-install on.
+On platforms that support it (`nice`), the auto-install worker runs at reduced
+priority so it never competes with your command. The download, archive and
+unpacked staging tree under the shared cache is removed after both success and
+failure; only the rollback copy of the binary is kept. A failure leaves the
+current binary working, records the cause, and falls back to the notice. An
+environment variable never turns auto-install on.
 
 ## Install safety
 
 The CLI fetches `SHA256SUMS` and the platform release asset and verifies the
 SHA-256 before replacing anything. It checks the downloaded binary's own
 `--version`, swaps it atomically, and keeps exactly one `*.previous` copy for
-`update --rollback`. Package-manager installs (Cargo, Homebrew, npm) are
+`update --rollback`. Package-manager installs name the command with the new
+release version; staged downloads and unpacked trees are always cleaned up. Package-manager installs (Cargo, Homebrew, npm) are
 detected and are never overwritten: the command names the right manager
 command instead.
 

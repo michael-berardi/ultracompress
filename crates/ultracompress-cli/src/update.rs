@@ -48,6 +48,33 @@ fn latest_url() -> Result<String, String> {
     contract::latest_release_url(env!("CARGO_PKG_REPOSITORY"))
 }
 
+fn cached_outcome(cache: &contract::UpdateCache) -> Outcome {
+    Outcome {
+        release: cache.release.clone(),
+        error: cache.last_error.clone(),
+        gate: None,
+    }
+}
+
+/// Wait briefly for a check already running in another CLI process. The
+/// request ceiling is four seconds, so five seconds covers a live check; a
+/// stale claim is reclaimable by the core after its TTL.
+const CHECK_CLAIM_WAIT_MS: u64 = 5_000;
+
+fn hold_check_claim() -> Option<contract::CheckClaim> {
+    let path = contract::claim_path();
+    let deadline = std::time::Instant::now() + Duration::from_millis(CHECK_CLAIM_WAIT_MS);
+    loop {
+        if let Some(claim) = contract::claim_check(&path, contract::now_secs()) {
+            return Some(claim);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn download_base() -> Result<String, String> {
     let url = latest_url()?;
     url.strip_suffix("/releases/latest")
@@ -67,6 +94,17 @@ pub fn check(_current: &str, interactive: bool, explicit: bool) -> Outcome {
             gate: Some(gate),
         };
     }
+    let cache = contract::read_cache();
+    let now = contract::now_secs();
+    if !contract::check_due(&cache, now) {
+        return cached_outcome(&cache);
+    }
+    // One exclusive in-flight claim per machine: quick successive commands
+    // reuse the first check's result instead of each opening a request.
+    let _claim = match hold_check_claim() {
+        Some(claim) => claim,
+        None => return cached_outcome(&cache),
+    };
     let mut cache = contract::read_cache();
     let now = contract::now_secs();
     if contract::check_due(&cache, now) {
@@ -90,16 +128,36 @@ pub fn check(_current: &str, interactive: bool, explicit: bool) -> Outcome {
     }
 }
 
-fn spawn_detached(arg: &str) -> Result<(), String> {
+fn detached_command(arg: &str, low_priority: bool) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find own binary: {e}"))?;
-    Command::new(exe)
-        .arg(arg)
+    let mut command = if low_priority && cfg!(unix) {
+        // `nice` is the portable way to lower priority on Unix; the child
+        // keeps the same hidden argument and privileges, minus scheduling.
+        let mut nice = Command::new("nice");
+        nice.args(["-n", "10"]).arg(exe);
+        nice
+    } else {
+        Command::new(exe)
+    };
+    command.arg(arg);
+    Ok(command)
+}
+
+fn spawn_detached(arg: &str, low_priority: bool) -> Result<(), String> {
+    let spawned = detached_command(arg, low_priority)?
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("cannot start background update worker: {e}"))
+        .spawn();
+    match spawned {
+        Ok(_) => Ok(()),
+        Err(_err) if low_priority && cfg!(unix) => {
+            // No `nice` on this Unix flavor: a direct worker still honors all
+            // gates and the bounded check.
+            spawn_detached(arg, false)
+        }
+        Err(err) => Err(format!("cannot start background update worker: {err}")),
+    }
 }
 
 /// Called after the user's command has printed its output. A cached notice is
@@ -137,7 +195,7 @@ pub fn after_command(current: &str, interactive: bool) {
         let _ = contract::write_cache(&cache);
     }
     if contract::check_due(&cache, now) {
-        let _ = spawn_detached("--update-check-background");
+        let _ = spawn_detached("--update-check-background", false);
     }
     if config.auto_install {
         if let Some(release) = &cache.release {
@@ -147,7 +205,7 @@ pub fn after_command(current: &str, interactive: bool) {
             {
                 cache.auto_attempted_version = Some(release.version.clone());
                 let _ = contract::write_cache(&cache);
-                let _ = spawn_detached("--update-auto-install");
+                let _ = spawn_detached("--update-auto-install", true);
             }
         }
     }
@@ -278,12 +336,11 @@ pub fn verify_checksum(sums: &str, asset: &str, bytes: &[u8]) -> Result<(), Stri
 }
 
 /// Package manager ownership is detected before any file is replaced.
-pub fn package_manager_command(target: &Path) -> Option<String> {
+pub fn package_manager_command(target: &Path, new_version: &str) -> Option<String> {
     let text = target.to_string_lossy().replace('\\', "/");
     if text.contains("/.cargo/") {
         Some(format!(
-            "cargo install ultracompress --locked --version {}",
-            env!("CARGO_PKG_VERSION")
+            "cargo install ultracompress --locked --version {new_version}"
         ))
     } else if text.contains("/Cellar/")
         || text.contains("/homebrew/")
@@ -445,25 +502,27 @@ fn find_binary(dir: &Path) -> Option<PathBuf> {
     found
 }
 
-/// Verify the release checksum before swapping anything, then replace the
-/// binary atomically. A package-managed install is never overwritten.
-pub fn install_release(release: &contract::Release, quiet: bool) -> Result<(), String> {
-    let asset = asset_name();
-    if asset.is_empty() {
-        return Err("no release asset for this platform; upgrade from source".to_string());
-    }
-    let target = install_target()?;
-    if let Some(command) = package_manager_command(&target) {
-        return Err(format!("package-managed install; run: {command}"));
-    }
-    let base = download_base()?;
-    let tag = format!("v{}", release.version);
-    let dir = contract::cache_dir().join("install").join(&tag);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create install stage: {e}"))?;
+/// Remove only this version's staging tree, on every exit path. The shared
+/// cache file, install log and rollback copy live outside `dir` and stay put.
+fn with_stage_cleanup<T>(
+    dir: &Path,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let result = action();
+    let _ = std::fs::remove_dir_all(dir);
+    result
+}
+
+/// Verify the prepared checksums/archive, then swap the binary atomically.
+fn install_from_stage(
+    dir: &Path,
+    asset: &str,
+    release: &contract::Release,
+    target: &Path,
+    quiet: bool,
+) -> Result<(), String> {
     let sums_path = dir.join("SHA256SUMS");
     let asset_path = dir.join(asset);
-    download(&format!("{base}/download/{tag}/SHA256SUMS"), &sums_path, 30)?;
-    download(&format!("{base}/download/{tag}/{asset}"), &asset_path, 30)?;
     let sums =
         std::fs::read_to_string(&sums_path).map_err(|e| format!("cannot read checksums: {e}"))?;
     let bytes = std::fs::read(&asset_path).map_err(|e| format!("cannot read download: {e}"))?;
@@ -485,7 +544,7 @@ pub fn install_release(release: &contract::Release, quiet: bool) -> Result<(), S
             release.version
         ));
     }
-    swap_binary(&staged, &target)?;
+    swap_binary(&staged, target)?;
     if !quiet {
         println!(
             "Installed ultracompress {}. The new version applies on the next start.",
@@ -494,6 +553,31 @@ pub fn install_release(release: &contract::Release, quiet: bool) -> Result<(), S
         println!("Rollback: ultracompress update --rollback");
     }
     Ok(())
+}
+
+/// Download the release into a version-scoped stage, verify it, and clean the
+/// stage whether the install succeeds or fails. Package managers are never
+/// overwritten; they get the command for the new version instead.
+pub fn install_release(release: &contract::Release, quiet: bool) -> Result<(), String> {
+    let asset = asset_name();
+    if asset.is_empty() {
+        return Err("no release asset for this platform; upgrade from source".to_string());
+    }
+    let target = install_target()?;
+    if let Some(command) = package_manager_command(&target, &release.version) {
+        return Err(format!("package-managed install; run: {command}"));
+    }
+    let base = download_base()?;
+    let tag = format!("v{}", release.version);
+    let dir = contract::cache_dir().join("install").join(&tag);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create install stage: {e}"))?;
+    with_stage_cleanup(&dir, || {
+        let sums_path = dir.join("SHA256SUMS");
+        let asset_path = dir.join(asset);
+        download(&format!("{base}/download/{tag}/SHA256SUMS"), &sums_path, 30)?;
+        download(&format!("{base}/download/{tag}/{asset}"), &asset_path, 30)?;
+        install_from_stage(&dir, asset, release, &target, quiet)
+    })
 }
 
 fn confirm(prompt: &str, default_yes: bool) -> bool {
@@ -698,10 +782,115 @@ mod tests {
 
     #[test]
     fn package_manager_is_never_overwritten() {
-        assert!(package_manager_command(Path::new("/opt/homebrew/bin/ultracompress")).is_some());
         assert!(
-            package_manager_command(Path::new("/home/someone/.cargo/bin/ultracompress")).is_some()
+            package_manager_command(Path::new("/opt/homebrew/bin/ultracompress"), "9.9.9")
+                .is_some()
         );
-        assert!(package_manager_command(Path::new("/usr/local/bin/ultracompress")).is_none());
+        assert_eq!(
+            package_manager_command(Path::new("/home/someone/.cargo/bin/ultracompress"), "9.9.9")
+                .as_deref(),
+            Some("cargo install ultracompress --locked --version 9.9.9")
+        );
+        assert!(
+            package_manager_command(Path::new("/usr/local/bin/ultracompress"), "9.9.9").is_none()
+        );
+    }
+
+    #[test]
+    fn auto_worker_command_lowers_priority_where_supported() {
+        let exe = std::env::current_exe().unwrap();
+        let check = detached_command("--update-check-background", false).unwrap();
+        assert_eq!(check.get_program(), exe.as_os_str());
+        let auto = detached_command("--update-auto-install", true).unwrap();
+        #[cfg(unix)]
+        {
+            assert_eq!(auto.get_program(), "nice");
+            let args: Vec<_> = auto.get_args().collect();
+            assert_eq!(args[0], "-n");
+            assert_eq!(args[1], "10");
+            assert_eq!(args[2], exe.as_os_str());
+            assert_eq!(args[3], "--update-auto-install");
+        }
+        #[cfg(not(unix))]
+        {
+            assert_eq!(auto.get_program(), exe.as_os_str());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_install_is_cleaned_after_success_and_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        fn prepare_stage(dir: &Path, asset: &str, reported: &str) {
+            let _ = std::fs::remove_dir_all(dir);
+            let payload = dir.join("payload");
+            std::fs::create_dir_all(&payload).unwrap();
+            let binary = payload.join("ultracompress");
+            std::fs::write(
+                &binary,
+                format!("#!/bin/sh\nprintf 'ultracompress {reported}\\n'\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let archive = dir.join(asset);
+            assert!(Command::new("tar")
+                .args([
+                    "-czf",
+                    archive.to_str().unwrap(),
+                    "-C",
+                    payload.to_str().unwrap(),
+                    "ultracompress"
+                ])
+                .status()
+                .unwrap()
+                .success());
+            let bytes = std::fs::read(&archive).unwrap();
+            std::fs::write(
+                dir.join("SHA256SUMS"),
+                format!("{:x}  {asset}\n", Sha256::digest(&bytes)),
+            )
+            .unwrap();
+        }
+
+        let root = std::env::temp_dir().join(format!("uc-stage-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let stage = root.join("install").join("v9.9.9");
+        let target = root.join("ultracompress");
+        std::fs::write(&target, b"running binary").unwrap();
+        let release = contract::Release {
+            version: "9.9.9".into(),
+            notes: String::new(),
+        };
+        let asset = asset_name();
+        assert!(!asset.is_empty());
+
+        prepare_stage(&stage, asset, "9.9.9");
+        with_stage_cleanup(&stage, || {
+            install_from_stage(&stage, asset, &release, &target, true)
+        })
+        .unwrap();
+        assert!(!stage.exists(), "successful install removes its stage");
+        assert_ne!(std::fs::read(&target).unwrap(), b"running binary");
+        assert_eq!(
+            std::fs::read(target.with_extension("previous")).unwrap(),
+            b"running binary"
+        );
+
+        // A wrong self-reported version fails before the swap: the running
+        // binary and its rollback copy survive, and the stage still goes away.
+        prepare_stage(&stage, asset, "8.8.8");
+        let failed = with_stage_cleanup(&stage, || {
+            install_from_stage(&stage, asset, &release, &target, true)
+        });
+        assert!(failed.is_err());
+        assert!(!stage.exists(), "failed install removes its stage");
+        assert_ne!(std::fs::read(&target).unwrap(), b"running binary");
+        assert_eq!(
+            std::fs::read(target.with_extension("previous")).unwrap(),
+            b"running binary"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
