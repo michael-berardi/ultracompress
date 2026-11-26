@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -32,6 +32,7 @@ import {
   type CompactEventLike,
   type UltraCompressCompactResult,
 } from "./src/compact-hook";
+import { NOTICE_RECHECK_MS, UPDATE_STATUS_KEY, footerText, runCli, updateArgs } from "./src/update-notice";
 
 /**
  * UltraCompress — content-aware compaction for Pi.
@@ -64,8 +65,26 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const textKeys = new TextKeyCache();
   let lastCalibratedCpt: number | undefined;
   let visionKnown: boolean | null = null;
+  let lastNoticeAt = 0;
 
-  pi.on("session_start", () => {
+  // Footer notice in interactive sessions only; never in compaction output,
+  // tool results, or print/JSON/RPC modes. The CLI decides whether one is due.
+  const showUpdateNotice = (ctx: ExtensionContext) => {
+    if (!settings.checkForUpdates || ctx.mode !== "tui" || !binAvailable) return;
+    if (Date.now() - lastNoticeAt < NOTICE_RECHECK_MS) return;
+    lastNoticeAt = Date.now();
+    void runCli(ultracompressBin, ["update", "--notice"]).then((result) => {
+      const text = footerText(result.stdout);
+      if (!text) return;
+      try {
+        ctx.ui.setStatus(UPDATE_STATUS_KEY, ctx.ui.theme.fg("accent", text));
+      } catch {
+        // A host without a footer keeps the session working.
+      }
+    });
+  };
+
+  pi.on("session_start", (_event, ctx) => {
     transformCache.clear();
     noGainCache.clear();
     transformFailures.clear();
@@ -74,6 +93,10 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     // a previous session's chars-per-token into the next one.
     lastCalibratedCpt = undefined;
     visionKnown = null;
+    showUpdateNotice(ctx);
+  });
+  pi.on("turn_end", (_event, ctx) => {
+    showUpdateNotice(ctx);
   });
 
   let debugWriteFailed = false;
@@ -347,6 +370,21 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
         `snapshots: ${countSnaps(process.cwd())} in .steak-pi/snaps`,
       ];
       await ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("ultracompress-update", {
+    description: "Install the UltraCompress CLI update, or: check | skip | auto on|off|status",
+    handler: async (args, ctx) => {
+      const argv = updateArgs(args ?? "");
+      if (!argv) {
+        await ctx.ui.notify("usage: /ultracompress-update [check | skip | auto on|off|status]", "warning");
+        return;
+      }
+      const result = await runCli(ultracompressBin, argv, 300_000);
+      const text = (result.stdout || result.stderr).trim() || `ultracompress update exited ${result.code}`;
+      await ctx.ui.notify(text, result.code === 0 || result.code === 10 ? "info" : "warning");
+      if (result.code === 0 && (argv[1] === "--yes" || argv[1] === "--skip")) ctx.ui.setStatus(UPDATE_STATUS_KEY, undefined);
     },
   });
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.0 (2026-11-26) — Update notice and verified self-update
+
+CLI and core 0.8.0, Pi adapter 0.7.0. The Claude Code plugin (0.6.1) and the
+Hermes engine (0.6.0) are unchanged.
+
+- After an interactive command, the CLI says when a newer stable release
+  exists, at most once a day per version, in two lines on stderr. The check is
+  one anonymous GET to the public GitHub release record, at most once every 24
+  hours, in a background process. Hooks, pipes, JSON output, `CI`, Claude Code
+  and `ULTRACOMPRESS_NO_UPDATE_CHECK=1` never see a notice or start a check.
+- `ultracompress update` installs the new release after checking its SHA-256
+  against the release's `SHA256SUMS` and running the new binary once. The old
+  binary is kept as `<binary>.previous` for `update --rollback` and removed
+  after the new version has run once (7 days at most); downloads are deleted on
+  success and on failure.
+- `update --check` (exit 0, 10 or 1 with the cause), `update --skip`,
+  `update --auto on|off|status` (automatic installs, off by default) and
+  `update --clean` (removes the update files when uninstalling). Homebrew and
+  `cargo install` copies are upgraded with their own command.
+- Pi adapter 0.7.0: a footer line in interactive sessions and
+  `/ultracompress-update` (`check`, `skip`, `auto on|off|status`);
+  `checkForUpdates: false` hides the line.
+- New [PRIVACY.md](PRIVACY.md) and [docs/updates.md](docs/updates.md).
+
 ## 0.7.1 (2026-11-26) — The summary budget keeps the newest lines
 
 - `compact` takes a size budget for the brief (`--summary-max-bytes`, or

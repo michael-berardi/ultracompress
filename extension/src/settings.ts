@@ -24,6 +24,8 @@ export interface UltraCompressSettings {
   snapshot: { enabled: boolean } & SnapshotRetention;
   /** Byte ceiling for automatically generated summaries; explicit compaction is never capped. */
   summaryMaxBytes: number;
+  /** Footer update notice; the CLI's own config still owns install opt-in. */
+  checkForUpdates: boolean;
   debug: boolean;
 }
 
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: UltraCompressSettings = {
   snap: { enabled: true, minChars: 6000, placement: "nextUser", imageTokensPerFrame: null, providers: ["anthropic", "google"] },
   snapshot: { enabled: true, ...DEFAULT_SNAPSHOT_RETENTION },
   summaryMaxBytes: 16384,
+  checkForUpdates: true,
   debug: false,
 };
 
@@ -58,6 +61,7 @@ export function mergeSettings(raw: unknown): UltraCompressSettings {
   if (typeof obj.ultracompressBin === "string") out.ultracompressBin = obj.ultracompressBin;
   // One-release migration alias; new files always write ultracompressBin.
   else if (typeof obj.rcBin === "string") out.ultracompressBin = obj.rcBin;
+  if (typeof obj.checkForUpdates === "boolean") out.checkForUpdates = obj.checkForUpdates;
   if (typeof obj.debug === "boolean") out.debug = obj.debug;
   if (typeof obj.summaryMaxBytes === "number" && Number.isFinite(obj.summaryMaxBytes)) {
     out.summaryMaxBytes = Math.max(1024, Math.min(65536, Math.floor(obj.summaryMaxBytes)));

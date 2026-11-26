@@ -23,7 +23,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SHIPPED_DIRS = ["crates", "docs", "scripts", "extension", "hermes", "claude-code", "tests", "test"]
-SHIPPED_FILES = ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "Cargo.toml"]
+SHIPPED_FILES = ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "PRIVACY.md", "Cargo.toml"]
 LEGAL = {"LICENSE", "THIRD-PARTY.md"}
 TEXT_EXTENSIONS = {".md", ".rs", ".ts", ".js", ".mjs", ".py", ".toml", ".json", ".sh", ".yml", ".yaml", ".txt"}
 SKIP_DIRS = {"node_modules", "target", ".git", "vendor"}

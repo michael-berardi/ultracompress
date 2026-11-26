@@ -10,10 +10,13 @@
 //!   ultracompress stats       per-role content breakdown of a session
 //!   ultracompress frames      render text to PNG frames (debugging / standalone use)
 //!   ultracompress version     print version
+//!   ultracompress update      check for, and install, a verified newer release
 //!
 //! Input: `--session FILE` (Pi session JSONL or Claude Code transcript) or
 //! stdin JSON `{ "entries": [...] }` (the extension contract). Output: JSON on
 //! stdout, diagnostics on stderr.
+
+mod update;
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -31,7 +34,7 @@ fn die(msg: &str) -> ! {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(|s| s.as_str()).unwrap_or_else(|| {
-        die("usage: ultracompress <plan|compact|recall|stats|frames|version> [options]")
+        die("usage: ultracompress <plan|compact|recall|stats|frames|version|update> [options]")
     });
 
     match cmd {
@@ -44,8 +47,13 @@ fn main() {
         "recall" => main_recall(&args[1..]),
         "stats" => main_stats(&args[1..]),
         "frames" => main_frames(&args[1..]),
+        "update" => std::process::exit(update::run(&args[1..])),
+        // Detached daily check (and opted-in install); not a user command.
+        "__update-background" => std::process::exit(update::background()),
         other => die(&format!("unknown command '{other}'")),
     }
+    // Silent outside a terminal: hooks, pipes and JSON readers see nothing.
+    update::after_command();
 }
 
 struct Cli {

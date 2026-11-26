@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.7.1**. Install a prebuilt binary:
+Current CLI release: **0.8.0**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -29,9 +29,9 @@ release `SHA256SUMS` before installing anything, and finish by running `ultracom
 On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`) with a shim in
 `~/.local/bin` (`ULTRACOMPRESS_BIN_DIR`); no sudo, no shell-profile edits. On Windows it lives in
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
-Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
-again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.7.1`).
+Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run
+`ultracompress update` (see [Updates](#updates)) or the same line again. To remove, run `ultracompress update --clean`,
+then delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION` (for example `0.8.0`).
 
 ### From source
 
@@ -43,6 +43,22 @@ cargo install --locked --path crates/ultracompress-cli
 
 Ensure Cargo's bin directory is on `PATH`. The CLI does not require Node.js or
 an agent installation.
+
+## Updates
+
+After an interactive command the CLI says when a newer stable release exists:
+`ultracompress update` installs it (SHA-256 verified, one rollback copy),
+`update --check` only reports, `update --skip` hides that version, and
+`update --auto on` turns on automatic installs (off by default). In Pi the
+notice is a footer line and `/ultracompress-update` installs. Hooks, pipes, CI
+and JSON output never show it. Details: [docs/updates.md](docs/updates.md).
+
+## Privacy
+
+UltraCompress sends no telemetry and compaction makes no network call. The only
+request is the update check: one anonymous GET to this project's public GitHub
+release record, at most once a day, never from hooks or CI. Turn it off with
+`ULTRACOMPRESS_NO_UPDATE_CHECK=1`. Details: [PRIVACY.md](PRIVACY.md).
 
 ## First use
 
@@ -150,6 +166,7 @@ Regex is explicit via `--regex` / tool `regex:true`; the command also accepts
 | `/ultracompress-recall <query>` | Current lineage only; `scope:all` adds branches in the same session; JSON options support an explicit other session |
 | `/ultracompress-stats` | Show settings, policy, snapshots, and bridge status |
 | `/snaps` | Inspect pre-compaction snapshots |
+| `/ultracompress-update` | Install the CLI update; `check`, `skip`, `auto on\|off\|status` |
 
 Agent tool: `ultracompress_recall` searches raw history, including turns
 omitted from the active context. The Claude Code plugin registers the same
@@ -174,6 +191,7 @@ The adapter creates `~/.pi/agent/ultracompress.json` with safe defaults:
   },
   "snapshot": { "enabled": true, "maxCount": 10, "maxAgeDays": 14 },
   "summaryMaxBytes": 16384,
+  "checkForUpdates": true,
   "debug": false
 }
 ```
@@ -185,6 +203,7 @@ the sections and the newest lines stay (`--summary-max-bytes` on the command
 line). An explicit `/ultracompress` is never capped. The brief is deterministic, so
 free-text compaction instructions are not used; the adapter says so once.
 
+`checkForUpdates: false` hides the update footer line.
 Set `overrideDefaultCompaction` to `false` to retain Pi's core compaction.
 The UltraCompress binary can be configured explicitly. Provider image payloads
 are not rewritten.
