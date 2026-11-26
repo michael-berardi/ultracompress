@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-Current CLI release: **0.6.5**. Install a prebuilt binary:
+Current CLI release: **0.6.6**. Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -31,7 +31,7 @@ On macOS and Linux the binary lives in `~/.ultracompress` (`ULTRACOMPRESS_HOME`)
 `%LOCALAPPDATA%\UltraCompress` with a `.cmd` shim in its `bin` folder, added to your user `PATH`.
 Needs curl or wget, tar, and sha256sum or shasum (sh), or built-in cmdlets (PowerShell). To update, run the same line
 again. To remove, delete the install folder and the shim. Pin a version with `ULTRACOMPRESS_VERSION`
-(for example `0.6.5`).
+(for example `0.6.6`).
 
 ### From source
 
@@ -205,6 +205,44 @@ HERMES_AGENT_DIR=~/.hermes/hermes-agent <hermes python> -m unittest discover -s 
 The Rust CLI is independent of Pi. Its JSON-in/JSON-out contract is usable by
 other harnesses. Offline benchmark scripts are under `scripts/`; live benchmark
 scripts make provider calls and are not required for ordinary unit testing.
+
+## Privacy
+
+The CLI sends nothing over the network. It reads the session file or stdin you
+give it, writes JSON to stdout and errors to stderr, and makes no update check.
+UltraCompress sends no telemetry, analytics, crash reports, unique install IDs
+or machine fingerprints. No dependency with its own telemetry is run by the tool.
+
+When **you** run an installer, it downloads the release archive and `SHA256SUMS`
+from GitHub over HTTPS, verifies the SHA-256 before installing, and sends no usage
+data. The macOS binary is also signed and notarized. To remove an install, delete
+`~/.ultracompress` (or `%LOCALAPPDATA%\UltraCompress`) and the shim.
+
+Your agent host may send data to a model provider you configured: prompts go to
+that provider as usual, and snap-frame PNGs generated locally go to it when
+snapshots are enabled on a supported provider. UltraCompress chooses no provider
+and contacts none itself. The badges on this README are fetched by the site
+rendering it, not by the tool.
+
+Local files:
+
+- Pi writes `~/.pi/agent/ultracompress.json` (settings) and full pre-compaction
+  snapshots in `<project>/.steak-pi/snaps/`. Snapshots can contain session text.
+  Directories are `0700`, files `0600`, and at most the newest 20 snapshots within
+  64 MiB are kept (the newest is kept even if one snapshot is larger).
+  Delete them with `rm -rf <project>/.steak-pi/snaps` and
+  `rm ~/.pi/agent/ultracompress.json`.
+- Claude Code reads the local transcript and writes no files of its own; its
+  transcript and logs belong to Claude Code.
+- Hermes writes condensed turns, including tool output, to
+  `$HERMES_HOME/ultracompress/<session>.jsonl` for recall. The directory is
+  `0700`, the file `0600`, and the newest whole entries within 64 MiB are kept.
+  Set `archive_max_bytes` in the adapter's `settings.json` to change the budget.
+  Delete the archive with `rm -rf "$HERMES_HOME/ultracompress"`.
+- With `debug: true`, Pi overwrites one diagnostics file at
+  `~/.local/state/ultracompress/debug.json` (`$XDG_STATE_HOME` overrides the
+  state root). It is `0600` in a `0700` directory and can contain a short summary
+  preview. Delete it with `rm -rf ~/.local/state/ultracompress`.
 
 ## Measurements and security
 

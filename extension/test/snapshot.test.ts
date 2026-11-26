@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildSnap, listSnaps, readSnapMeta, snapFileName, writeSnapEntries } from "../src/snapshot.ts";
+import { buildSnap, listSnaps, pruneSnaps, readSnapMeta, snapFileName, writeSnap, writeSnapEntries } from "../src/snapshot.ts";
 
 const ENTRIES = [
   { type: "message", role: "user", text: "hello" },
@@ -25,6 +25,33 @@ describe("ultracompress snapshots (instant-snap compatible)", () => {
     const a = snapFileName(1_700_000_000_000);
     const b = snapFileName(1_700_000_001_000);
     expect(a < b).toBe(true);
+  });
+
+  it("writes private snapshots and prunes the oldest", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ultracompress-privacy-"));
+    try {
+      const snaps = join(dir, ".steak-pi", "snaps");
+      mkdirSync(join(dir, ".steak-pi"));
+      mkdirSync(snaps);
+      chmodSync(snaps, 0o777); // a pre-existing loose directory must be tightened
+      const first = writeSnapEntries(dir, ENTRIES, "old", 1_700_000_000_000).file;
+      const middle = buildSnap([], "middle", 1_700_000_001_000);
+      const newest = buildSnap([], "new", 1_700_000_002_000);
+      const middleFile = writeSnap(dir, middle.payload, middle.meta.file);
+      expect(statSync(snaps).mode & 0o777).toBe(0o700);
+      expect(statSync(join(dir, ".steak-pi")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(snaps, first)).mode & 0o777).toBe(0o600);
+      expect(statSync(middleFile).mode & 0o777).toBe(0o600);
+      writeSnap(dir, newest.payload, newest.meta.file);
+      expect(listSnaps(dir).length).toBe(3);
+      pruneSnaps(snaps, 2, 1024 * 1024);
+      const remaining = listSnaps(dir).map((m) => m.file).sort();
+      expect(remaining).toHaveLength(2);
+      expect(remaining).toContain(snapFileName(1_700_000_002_000));
+      expect(remaining).not.toContain(first);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

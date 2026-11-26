@@ -33,7 +33,7 @@ know who summarized what.
 You need the `ultracompress` binary (Rust 1.85+ to build):
 
 ```sh
-git clone --branch v0.6.5 https://github.com/michael-berardi/ultracompress
+git clone --branch v0.6.6 https://github.com/michael-berardi/ultracompress
 cd ultracompress
 cargo build --locked --release -j4
 mkdir -p ~/.local/bin && cp target/release/ultracompress ~/.local/bin/
@@ -103,6 +103,13 @@ rm ~/.claude/skills/ultracompress
 If you ran it with `--plugin-dir`, it was never installed — the next session
 without the flag is already clean. Remove `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`
 from `~/.claude/settings.json` only if nothing else uses function hooks.
+
+## Privacy
+
+This plugin runs the local binary on this session's transcript; it sends no data
+itself, has no telemetry and writes no files of its own. Claude Code's own
+network calls, transcript and logs are controlled by Claude Code. See the
+[main README](../README.md#privacy) for details.
 
 ## UltraTerm users
 

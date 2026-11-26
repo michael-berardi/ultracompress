@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.6 (2026-11-26) — Privacy hardening and documentation
+
+CLI/core 0.6.6; Pi, Claude Code and Hermes adapters 0.6.0.
+
+- Pi snapshots and settings now use `0700` directories and `0600` files. Snapshot
+  retention keeps the newest 20 files within 64 MiB, with the newest always kept.
+- Hermes raw recall archives use a `0700` directory and `0600` file and keep the
+  newest whole entries within `archive_max_bytes` (64 MiB by default).
+- Pi's optional debug dump moved from a shared `/tmp` file to one overwritten
+  `0600` file in the private state directory (`~/.local/state/ultracompress`).
+- Added a README Privacy section, adapter privacy notes, and regression tests that
+  reject telemetry packages/endpoints and check checksum-verified installers,
+  private storage and bounded retention. No telemetry or network call was added.
+
 ## 0.6.5 (2026-11-15) — CLI option validation
 
 - Reject invalid `--vision` values with exit status 2 instead of silently choosing

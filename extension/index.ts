@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { runUltraCompress } from "./src/bridge";
+import { writeDebug } from "./src/debug";
 import { recallArgs, recallProperties, recallText, parseRecallCommand } from "./src/recall";
 import { loadSettings, resolveUltraCompressBin, type UltraCompressSettings } from "./src/settings";
 import { listSnaps, writeSnapEntries } from "./src/snapshot";
@@ -39,6 +40,8 @@ import {
  */
 
 const AUTO_CONTINUE_CUSTOM_TYPE = "ultracompress-auto-continue";
+/** Kept in sync with package.json by the repository privacy guard test. */
+const ADAPTER_VERSION = "0.6.0";
 
 export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();
@@ -55,9 +58,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const dbg = (data: Record<string, unknown>) => {
     if (!settings.debug) return;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { writeFileSync } = require("node:fs") as typeof import("node:fs");
-      writeFileSync("/tmp/ultracompress-debug.json", JSON.stringify(data, null, 2));
+      writeDebug(data);
     } catch {}
   };
 
@@ -305,7 +306,7 @@ export default function ultraCompressExtension(pi: ExtensionAPI): void {
     description: "UltraCompress status and settings",
     handler: async (_args, ctx) => {
       const lines = [
-        `ultracompress ${"0.2.1"}`,
+        `ultracompress ${ADAPTER_VERSION}`,
         `UltraCompress binary: ${ultracompressBin}`,
         `policy: ${settings.policy} · override: ${settings.overrideDefaultCompaction} · smart-keep: ${settings.smartKeepTail}`,
         `snap: ${settings.snap.enabled ? "on" : "off"} (placement: ${settings.snap.placement})`,

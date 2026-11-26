@@ -36,9 +36,10 @@ from typing import Any, Dict, List, Optional
 from agent.context_compressor import ContextCompressor
 
 from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, compose_brief,
-                      conversation_view, find_binary, section, tool_only_brief, BRIEF_HEADING, to_pi_entries)
+                      conversation_view, find_binary, private_dir, section, tool_only_brief,
+                      trim_jsonl_archive, BRIEF_HEADING, to_pi_entries)
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 logger = logging.getLogger("plugins.ultracompress")
 
 PLUGIN_DIR = Path(__file__).resolve().parent
@@ -48,6 +49,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "threshold": 0.30,
     "binary": "",                 # "" = $ULTRACOMPRESS_BIN, then the standard install locations
     "archive_dir": "",            # "" = $HERMES_HOME/ultracompress
+    "archive_max_bytes": 64 * 1024 * 1024,  # keep the newest whole entries within this budget
     "timeout_seconds": 30,
     "tool_result_chars": 0,       # 0 = tool output stays out of the brief (it is archived for recall)
     "reply_chars": 1200,
@@ -203,6 +205,7 @@ class UltraCompressEngine(ContextCompressor):
             return
         try:
             new_path = self._archive_path()
+            private_dir(new_path.parent)
             old_path = new_path.with_name(re.sub(r"[^A-Za-z0-9_.-]", "_", str(old_id)) + ".jsonl")
             if old_path.exists() and not new_path.exists():
                 new_path.write_bytes(old_path.read_bytes())
@@ -214,7 +217,7 @@ class UltraCompressEngine(ContextCompressor):
         """Append condensed turns (Pi format, private file) so recall can find them. Never fatal."""
         try:
             path = self._archive_path()
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            private_dir(path.parent)
             fresh = not path.exists()
             stamp = f"c{int(time.time() * 1000)}-"
             with path.open("a", encoding="utf-8") as fh:
@@ -223,6 +226,10 @@ class UltraCompressEngine(ContextCompressor):
                 for entry in to_pi_entries([t for t in turns if not _is_carrier(t)], id_prefix=stamp):
                     fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
             os.chmod(path, 0o600)
+            try:
+                trim_jsonl_archive(path, int(self.uc_settings.get("archive_max_bytes") or 64 * 1024 * 1024))
+            except Exception as exc:
+                logger.warning("UltraCompress: could not bound the recall archive (%s)", exc)
         except Exception as exc:
             logger.warning("UltraCompress: could not archive condensed turns (%s); recall may miss them", exc)
 

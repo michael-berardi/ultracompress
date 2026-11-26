@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mergeSettings, DEFAULT_SETTINGS } from "../src/settings.ts";
+import { loadSettings, mergeSettings, DEFAULT_SETTINGS } from "../src/settings.ts";
 
 describe("settings", () => {
   it("defaults survive a bad payload", () => {
@@ -29,5 +32,17 @@ describe("settings", () => {
 
   it("rejects unknown policy values", () => {
     expect(mergeSettings({ policy: "turbo" }).policy).toBe("auto");
+  });
+
+  it("scaffolds settings privately", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ultracompress-settings-"));
+    try {
+      const file = join(dir, "agent", "ultracompress.json");
+      loadSettings(file);
+      expect(statSync(join(dir, "agent")).mode & 0o777).toBe(0o700);
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

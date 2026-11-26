@@ -30,6 +30,49 @@ _UNTRUSTED_PREAMBLE = re.compile(
 _UNTRUSTED_CLOSE = re.compile(r"\s*</untrusted_tool_result>\s*$", re.S)
 
 
+def private_dir(path: Path) -> None:
+    """Create a local state directory owner-only, including when it already exists."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def trim_jsonl_archive(path: Path, max_bytes: int) -> int:
+    """Bound a raw recall archive: keep its session header and newest whole entries.
+
+    Never cuts a line in half and never drops the newest entry. Returns the
+    retained byte count. Only called after a successful append.
+    """
+    data = path.read_text(encoding="utf-8")
+    size = len(data.encode("utf-8"))
+    if size <= max_bytes:
+        return size
+    lines = data.splitlines(keepends=True)
+    header = lines[:1] if lines and '"type": "session"' in lines[0] else []
+    body = lines[len(header):]
+    tail: List[str] = []
+    kept = sum(len(line.encode("utf-8")) for line in header)
+    for line in reversed(body):
+        n = len(line.encode("utf-8"))
+        if kept + n > max_bytes:
+            break
+        tail.append(line)
+        kept += n
+    tmp = path.with_name(path.name + ".trim")
+    try:
+        with tmp.open("w", encoding="utf-8") as fh:
+            fh.writelines(header)
+            fh.writelines(reversed(tail))
+        tmp.chmod(0o600)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return kept
+
+
 def find_binary(explicit: str = "", env: Optional[Dict[str, str]] = None) -> Optional[str]:
     """Settings value, then $ULTRACOMPRESS_BIN, then the standard install locations."""
     env = os.environ if env is None else env

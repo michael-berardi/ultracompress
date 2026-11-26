@@ -16,6 +16,52 @@ import * as path from "node:path";
 export const STATE_DIR = ".steak-pi";
 export const SNAPS_DIR = "snaps";
 
+/** Local snapshots hold full session text: private directory, private files, bounded count and size. */
+export const MAX_SNAPS = 20;
+export const MAX_SNAPS_BYTES = 64 * 1024 * 1024;
+
+/** Create/claim the snapshot directory as owner-only, even if it pre-existed with looser modes. */
+function privateSnapDir(cwd: string): string {
+  const state = path.join(cwd, STATE_DIR);
+  fs.mkdirSync(state, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(state, 0o700);
+  } catch {}
+  const dir = path.join(state, SNAPS_DIR);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch {}
+  return dir;
+}
+
+/**
+ * Delete the oldest snapshots this module wrote until at most `maxFiles` files and
+ * `maxBytes` total remain. Files we did not write are left untouched.
+ */
+export function pruneSnaps(dir: string, maxFiles = MAX_SNAPS, maxBytes = MAX_SNAPS_BYTES): void {
+  const candidates: Array<{ file: string; bytes: number; createdAt: number }> = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith(".json")) continue;
+    const file = path.join(dir, name);
+    const meta = readSnapMeta(file);
+    if (!meta) continue;
+    try {
+      candidates.push({ file, bytes: fs.statSync(file).size, createdAt: meta.createdAt });
+    } catch {}
+  }
+  candidates.sort((a, b) => b.createdAt - a.createdAt || a.file.localeCompare(b.file));
+  let total = candidates.reduce((sum, c) => sum + c.bytes, 0);
+  for (const [index, c] of candidates.entries()) {
+    // The newest snapshot is always kept, even if one session alone exceeds maxBytes.
+    if (index === 0 || (index < maxFiles && total - c.bytes >= 0 && total <= maxBytes)) continue;
+    try {
+      fs.unlinkSync(c.file);
+      total -= c.bytes;
+    } catch {}
+  }
+}
+
 export interface SnapMeta {
   file: string;
   reason: string;
@@ -58,11 +104,11 @@ export function writeSnapEntries(cwd: string, entries: unknown[], reason: string
     entries: entries.length,
     compactor: "ultracompress",
   };
-  const dir = path.join(cwd, STATE_DIR, SNAPS_DIR);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = privateSnapDir(cwd);
   const file = path.join(dir, meta.file);
-  const fd = fs.openSync(file, "w");
+  const fd = fs.openSync(file, "w", 0o600);
   try {
+    fs.chmodSync(file, 0o600);
     writeAll(fd, `{"snap":${JSON.stringify(meta)},"entries":[`);
     for (let i = 0; i < entries.length; i++) {
       if (i > 0) writeAll(fd, ",");
@@ -70,6 +116,7 @@ export function writeSnapEntries(cwd: string, entries: unknown[], reason: string
     }
     writeAll(fd, "]}");
     fs.closeSync(fd);
+    pruneSnaps(dir);
     return meta;
   } catch (error) {
     try {
@@ -112,10 +159,13 @@ function stringifySnapEntry(entry: unknown, index: number): string {
 }
 
 export function writeSnap(cwd: string, payload: string, fileName: string): string {
-  const dir = path.join(cwd, STATE_DIR, SNAPS_DIR);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = privateSnapDir(cwd);
   const file = path.join(dir, fileName);
-  fs.writeFileSync(file, payload);
+  fs.writeFileSync(file, payload, { mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {}
+  pruneSnaps(dir);
   return file;
 }
 
