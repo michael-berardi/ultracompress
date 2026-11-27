@@ -56,7 +56,7 @@ no files of its own; its transcript and logs belong to Claude Code.
 
 Nothing else is written. UltraCompress puts no session text, credentials, or
 downloads in `$TMPDIR`/`/tmp`; binary swaps use temp files beside the installed
-binary and in the shared cache, and stale ones are removed within an hour. The
+binary and in the shared cache, and stale ones older than an hour are removed by the next successful command. The
 only write inside your project is `.steak-pi/snaps/`, so add `.steak-pi/` to
 that project's `.gitignore`.
 
