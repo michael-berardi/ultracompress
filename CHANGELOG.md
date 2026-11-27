@@ -1,21 +1,36 @@
 # Changelog
 
-## 0.8.1 (2026-11-26) — Version alignment with the published v0.8.0
+## 0.8.2 (2026-11-26) — Resolve the published v0.8.1 collision (B1)
 
-- Verified that origin has the annotated `v0.8.0` tag (commit `306b8d4`) and a
+- Verified that origin now has the annotated `v0.8.1` tag (commit `22d024d`)
+  and a published, non-prerelease [v0.8.1 release](https://github.com/michael-berardi/ultracompress/releases/tag/v0.8.1)
+  with installers, `SHA256SUMS` and platform archives. The earlier claim that
+  no `v0.8.1` tag or release exists was false and is corrected below.
+- Bumped the CLI, core, Pi, Claude Code and Hermes manifests and constants from
+  0.8.1 to 0.8.2 so this branch stays above the published release. The Pi and
+  Hermes version checks now treat `v0.8.1` as older, not as an available update.
+- Corrected README and docs version claims: the newest published release is
+  `v0.8.1`; installer, clone and version-pin examples use that release's
+  published URLs. The sample notice in `docs/updates.md` now shows 0.8.3 against
+  a 0.8.2 build.
+- Recorded round-5 note N5 in `docs/updates.md`: this repository keeps the
+  detailed README Privacy section rather than the contract's short form.
+
+## 0.8.1 (2026-11-26) — Version alignment with the then-published v0.8.0
+
+- Verified that origin had the annotated `v0.8.0` tag (commit `306b8d4`) and a
   published, non-prerelease v0.8.0 release with installers and platform archives.
-  This branch was still at 0.7.2, which is older than that release, so the CLI,
-  core, Pi, Claude Code and Hermes manifests and constants are now aligned at
-  0.8.1. The anonymous update check no longer announces `v0.8.0` as a new
-  release this build has already superseded. No `v0.8.1` tag or release exists:
-  published download links stay on `latest/download`, and version-pinned
-  examples use the published `v0.8.0`.
+  This branch was still at 0.7.2, which was older than that release, so the CLI,
+  core, Pi, Claude Code and Hermes manifests and constants were aligned at
+  0.8.1. The anonymous update check no longer announced `v0.8.0` as a new
+  release this build had superseded. Origin has since published `v0.8.1`; see
+  0.8.2 above for the current version and published URLs.
 - Recorded the contract §4a rollback gap in `docs/updates.md`: the single `*.previous` binary is retained indefinitely with no first-run or seven-day cleanup and must be removed manually; `update --auto off` disables automatic installs but does not delete the rollback copy. No update behavior changed.
 
 ## 0.7.2 (2026-11-26) — Update install hardening
 
 At the time, all adapters on this branch were aligned at 0.7.2, above the
-then-latest `v0.7.1` tag. Origin has since published `v0.8.0`; see 0.8.1 above
+then-latest `v0.7.1` tag. Origin has since published `v0.8.1`; see 0.8.2 above
 for the current aligned version.
 
 - Fixed B5a: download, archive and unpacked staging under the shared cache are

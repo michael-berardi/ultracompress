@@ -73,7 +73,7 @@ A notice appears at most once per 24 hours per version. Skipping a version
 hides that version only; a newer release notifies again. The notice reads:
 
 ```text
-ultracompress 0.8.2 available (you have 0.8.1) · run: ultracompress update
+ultracompress 0.8.3 available (you have 0.8.2) · run: ultracompress update
 turn on automatic updates: ultracompress update --auto on · skip: ultracompress update --skip
 ```
 
@@ -120,6 +120,17 @@ or run `ultracompress update --rollback` to restore it first.
 `ultracompress update --auto off` writes `auto_install = false` to the config
 and stops future automatic installs, but it **does not delete the rollback
 copy** and does not start any timed cleanup.
+
+## Documentation deviation (round-5 N5)
+
+The 2026-11-26 contract specifies a short Privacy notice. This repository keeps
+the longer `## Privacy` section in `README.md` instead. That section states that
+the CLI sends nothing except the anonymous release check, that there is no
+telemetry, when checks are off and how to opt out, that user-run installers
+verify SHA-256, and which local files hold session text with their `0700`/`0600`
+permissions, `64 MiB` retention and deletion commands. The detailed form is
+intentional and includes what the contract's short form requires; keeping it
+does not change any privacy behavior.
 
 ## Compatibility notes
 
