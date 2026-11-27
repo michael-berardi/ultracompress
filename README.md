@@ -222,7 +222,9 @@ scripts make provider calls and are not required for ordinary unit testing.
 
 ## Privacy
 
-UltraCompress makes no automatic network traffic except one anonymous release check; an opted-in background install also downloads the archive and checksum. It records no telemetry and reads only the session file or stdin you give it. Local files can hold session text, so each is owner-only (`0700`/`0600`) and bounded by count, size or age. Every local write, its lifetime and deletion command are in [PRIVACY.md](PRIVACY.md); the check is in [Updates](docs/updates.md).
+UltraCompress makes no automatic network traffic except one anonymous release check; an opted-in background install also downloads the archive and checksum.
+It records no telemetry and reads only the session file or stdin you give it. Local files can hold session text, so each is owner-only (`0700`/`0600`) and bounded by count, size or age.
+Every local write, its lifetime and deletion command are in [PRIVACY.md](PRIVACY.md); the check is in [Updates](docs/updates.md).
 
 ## Measurements and security
 
