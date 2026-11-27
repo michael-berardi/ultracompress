@@ -6,7 +6,9 @@ statement; the [README](README.md#privacy) keeps the short form.
 
 - **One automatic request, one purpose.** UltraCompress makes no automatic network traffic
   except one anonymous check of this repository's public GitHub
-  latest-release record, at most once per 24 hours per machine. Fixed
+  latest-release record, at most once per 24 hours per machine. If you opt into
+  automatic updates, the background worker also downloads the release archive
+  and `SHA256SUMS` without waiting for a command. Fixed
   `ultracompress-update-check` user agent; no install id, version, usage event,
   machine data, or credentials; nothing in your command's output.
 - **No telemetry at all.** No analytics, crash reporting, unique install ID,
