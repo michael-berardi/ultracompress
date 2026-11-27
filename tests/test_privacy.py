@@ -106,9 +106,10 @@ class PrivacyTest(unittest.TestCase):
         readme = _text(ROOT / "README.md")
         self.assertIn("## Privacy", readme)
         privacy = readme.split("## Privacy", 1)[1].split("\n## ", 1)[0]
-        # The README keeps the short form the contract asks for: a handful of
-        # lines that point at the detail rather than repeating it.
+        # The README keeps the short form the contract asks for: between three
+        # and six lines that point at the detail rather than repeating it.
         lines = [line for line in privacy.splitlines() if line.strip()]
+        self.assertGreaterEqual(len(lines), 3)
         self.assertLessEqual(len(lines), 6)
         self.assertIn("[PRIVACY.md](PRIVACY.md)", privacy)
         self.assertIn("no telemetry", privacy)
@@ -128,7 +129,12 @@ class PrivacyTest(unittest.TestCase):
                 self.assertIn(path, privacy)
         self.assertIn("Lifetime", privacy)
         self.assertIn("at most 30 days", privacy)
+        self.assertIn("next snapshot write", privacy)
         self.assertIn("7 days", privacy)
+        # The split must keep the platform-specific install cleanup steps.
+        self.assertIn("<install dir>", privacy)
+        self.assertIn("%LOCALAPPDATA%\\UltraCompress", privacy)
+        self.assertIn("Remove-Item", privacy)
         # The refresh hand-offs point at the detail, not at a section summary.
         for adapter in (ROOT / "hermes" / "README.md", ROOT / "claude-code" / "README.md"):
             with self.subTest(adapter=adapter.name):
@@ -157,6 +163,10 @@ class PrivacyTest(unittest.TestCase):
         self.assertIn("DEBRIS_MAX_AGE_SECS", update)
         self.assertIn("fn sweep_local_data", update)
         self.assertIn("record_rollback", update)
+        # With no sidecar there is no known install time: the old binary's mtime
+        # must not be used to age out the rollback copy.
+        self.assertIn("ROLLBACK_OBSERVED_VERSION", update)
+        self.assertNotRegex(update, r"expired\(modified_secs\(&previous\)")
         # The sweep runs on the successful path, not inside the check itself.
         self.assertIn("sweep_local_data", main)
         # The update check keeps its single request and fixed user agent.

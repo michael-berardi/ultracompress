@@ -445,6 +445,9 @@ pub const ROLLBACK_MAX_AGE_SECS: u64 = 7 * 86_400;
 pub const STAGE_MAX_AGE_SECS: u64 = 7 * 86_400;
 /// A half-written temp file left by an interrupted write is debris after an hour.
 pub const DEBRIS_MAX_AGE_SECS: u64 = 3_600;
+/// Marker for a copy found without a sidecar: it cannot name a running version,
+/// so an observed copy is never mistaken for a successful replacement.
+const ROLLBACK_OBSERVED_VERSION: &str = "observed";
 
 /// `<target>.previous.json` — one version string and one Unix second. It holds
 /// no session text, no identifiers and no check state.
@@ -454,8 +457,10 @@ fn rollback_sidecar(previous: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Best effort: a sidecar that cannot be written only means retention falls
-/// back to the age rule, which never costs the rollback copy early.
+/// Best effort: a sidecar that cannot be written only means the copy is kept,
+/// since there is no trustworthy age to apply. Never age a copy from the old
+/// binary's mtime: on some platforms that timestamp is the previous install's,
+/// which can be months old and would delete a usable rollback immediately.
 fn record_rollback(previous: &Path, version: &str, now: u64) {
     let body = serde_json::json!({ "version": version, "swapped_at": now }).to_string();
     let path = rollback_sidecar(previous);
@@ -522,17 +527,24 @@ fn sweep_at(target: &Path, cache: &Path, current: &str, now: u64) -> usize {
         removed += sweep_install_debris(parent, target, now);
     }
     if previous.exists() {
-        let marker = read_rollback_marker(&sidecar);
+        let marker = read_rollback_marker(&sidecar).or_else(|| {
+            // A copy without a sidecar predates this contract, came from an
+            // upgrade, or lost its marker. Its binary mtime is not an install
+            // time, so start the seven-day clock when we first observe it
+            // instead. If the marker cannot be written, keep the copy.
+            record_rollback(&previous, ROLLBACK_OBSERVED_VERSION, now);
+            read_rollback_marker(&sidecar)
+        });
         // This process is the installed binary and its command has finished, so
         // a sidecar naming the running version proves the replacement works.
         let ran_ok = marker
             .as_ref()
             .map(|(version, _)| version == current)
             .unwrap_or(false);
-        let aged = match &marker {
-            Some((_, swapped_at)) => expired(Some(*swapped_at), now, ROLLBACK_MAX_AGE_SECS),
-            None => expired(modified_secs(&previous), now, ROLLBACK_MAX_AGE_SECS),
-        };
+        let aged = marker
+            .as_ref()
+            .map(|(_, swapped_at)| expired(Some(*swapped_at), now, ROLLBACK_MAX_AGE_SECS))
+            .unwrap_or(false);
         if (ran_ok || aged) && std::fs::remove_file(&previous).is_ok() {
             removed += 1;
         }
@@ -1014,6 +1026,67 @@ mod tests {
             2
         );
         assert!(!previous.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rollback_copy_without_sidecar_ignores_the_old_binary_mtime() {
+        let root = std::env::temp_dir().join(format!("uc-sweep-no-sidecar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let target = root.join("ultracompress");
+        let previous = target.with_extension("previous");
+        std::fs::write(&target, b"new").unwrap();
+        std::fs::write(&previous, b"old").unwrap();
+        // The copy holds an old binary whose mtime may be from the previous
+        // install. Give it a timestamp far older than the retention window.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&previous)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1)),
+            )
+            .unwrap();
+        assert!(!rollback_sidecar(&previous).exists());
+
+        // No marker means no known install time: an ancient binary mtime must
+        // never make a usable rollback copy expire on the first sweep.
+        let observed_at = 10_000 + ROLLBACK_MAX_AGE_SECS;
+        assert_eq!(sweep_at(&target, &cache, "9.9.8", observed_at), 0);
+        assert!(
+            previous.exists(),
+            "no sidecar cannot mean 'already expired'"
+        );
+        let (version, start) = read_rollback_marker(&rollback_sidecar(&previous))
+            .expect("first sweep records when the copy was observed");
+        assert_eq!(version, ROLLBACK_OBSERVED_VERSION);
+        assert_eq!(start, observed_at);
+
+        // Expiry runs from the observation, not from the old binary's mtime.
+        assert_eq!(
+            sweep_at(
+                &target,
+                &cache,
+                "9.9.8",
+                observed_at + ROLLBACK_MAX_AGE_SECS - 1
+            ),
+            0
+        );
+        assert!(previous.exists());
+        assert_eq!(
+            sweep_at(
+                &target,
+                &cache,
+                "9.9.8",
+                observed_at + ROLLBACK_MAX_AGE_SECS
+            ),
+            2
+        );
+        assert!(!previous.exists());
+        assert!(!rollback_sidecar(&previous).exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -118,9 +118,12 @@ carries a lifetime:
 - A successful swap writes `*.previous` plus a `*.previous.json` sidecar holding
   the installed version string and one Unix second. The first successful
   command run by the replacement binary removes both; if the replacement never
-  runs, the copy expires seven days after the swap. `update --rollback` restores
-  the copy and drops the sidecar, after which the plain seven-day age rule
-  applies.
+  runs, the copy expires seven days after the swap. A copy found without a
+  sidecar gets one on first observation, with version `observed` and the Unix
+  second it was seen, starting the same seven-day clock: the binary mtime
+  belongs to the old binary and is never used to expire it early.
+  `update --rollback` restores the copy and drops the sidecar, after which the
+  age rule runs from the next observation.
 - Swap temp files beside the binary (`.ultracompress-new-*`, `*.rollback-tmp`),
   half-written `install.log` temp files, and abandoned stage trees under
   `<cache>/ultracompress/install/` are swept by the same pass: an hour for temp
@@ -142,8 +145,10 @@ write with its contents, its lifetime and its deletion command, so the short
 form no longer competes with the detailed one.
 
 Snapshot pruning now also expires full-session snapshots after 30 days, always
-keeping the newest, and the Hermes recall archive keeps its `archive_max_bytes`
-bound. Neither change alters retention of the shared update cache.
+keeping the newest. The age limit is applied on the next snapshot write, so an
+idle project keeps older snapshots until then. The Hermes recall archive keeps
+its `archive_max_bytes` bound. Neither change alters retention of the shared
+update cache.
 
 ## Compatibility notes
 
