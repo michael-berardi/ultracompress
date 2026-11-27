@@ -157,7 +157,10 @@ class PrivacyTest(unittest.TestCase):
     def test_rollback_copy_and_install_debris_have_retention(self):
         update = _without_rust_tests(_text(UPDATE_RS))
         main = _text(ROOT / "crates" / "ultracompress-cli" / "src" / "main.rs")
-        for name in ("ROLLBACK_MAX_AGE_SECS", "STAGE_MAX_AGE_SECS", "DEBRIS_MAX_AGE_SECS",
+        # Downloads stage in a TempDir removed by its drop guard; there is no
+        # persistent install stage folder to age out.
+        self.assertIn("impl Drop for TempDir", update)
+        for name in ("ROLLBACK_MAX_AGE_SECS", "DEBRIS_MAX_AGE_SECS",
                      "fn sweep_local_data", "record_rollback", "ROLLBACK_OBSERVED_VERSION"):
             with self.subTest(name=name):
                 self.assertIn(name, update)

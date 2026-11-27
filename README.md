@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-CLI version in this checkout: **0.8.3** (newest published release: [v0.8.1](https://github.com/michael-berardi/ultracompress/releases/tag/v0.8.1)). Install a prebuilt binary:
+Current CLI release: **0.8.3**. Install a prebuilt binary:
 
 macOS and Linux:
 

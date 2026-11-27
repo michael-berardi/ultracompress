@@ -30,7 +30,6 @@ const USAGE: &str =
 // Local retention (contract §4a): the rollback copy is tied to the version that
 // installed it, not to the old binary's mtime, and install leftovers are swept.
 const ROLLBACK_MAX_AGE_SECS: u64 = 7 * DAY;
-const STAGE_MAX_AGE_SECS: u64 = 7 * DAY;
 const DEBRIS_MAX_AGE_SECS: u64 = 3_600;
 const ROLLBACK_OBSERVED_VERSION: &str = "observed";
 
@@ -912,7 +911,7 @@ fn sweep_install_debris(parent: &Path, target: &Path, at: u64) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !swap_tmps.iter().any(|tmp| tmp == &name) && !name.starts_with(".ultracompress-new-") {
+        if !swap_tmps.iter().any(|tmp| tmp == &name) {
             continue;
         }
         if expired(modified_secs(&entry.path()), at, DEBRIS_MAX_AGE_SECS)
@@ -924,8 +923,8 @@ fn sweep_install_debris(parent: &Path, target: &Path, at: u64) -> usize {
     removed
 }
 
-/// Abandoned install stages expire after a week; half-written state temp files
-/// after an hour. The state files themselves and the cache folder stay.
+/// Half-written state temp files (`<file>.<pid>.tmp`) expire after an hour.
+/// The state files themselves and the cache folder stay.
 fn sweep_cache_debris(cache: &Path, at: u64) -> usize {
     let mut removed = 0;
     if let Ok(entries) = fs::read_dir(cache) {
@@ -941,20 +940,6 @@ fn sweep_cache_debris(cache: &Path, at: u64) -> usize {
             }
         }
     }
-    let stage_root = cache.join("install");
-    if let Ok(entries) = fs::read_dir(&stage_root) {
-        for entry in entries.flatten() {
-            if !entry.path().is_dir() {
-                continue;
-            }
-            if expired(modified_secs(&entry.path()), at, STAGE_MAX_AGE_SECS)
-                && fs::remove_dir_all(entry.path()).is_ok()
-            {
-                removed += 1;
-            }
-        }
-    }
-    let _ = fs::remove_dir(&stage_root); // only when empty
     removed
 }
 
@@ -1550,32 +1535,28 @@ mod tests {
     fn interrupted_installs_leave_no_debris() {
         let root = temp("sweep-debris");
         let cache = root.join("cache");
-        let stage = cache.join("install").join("v9.9.9");
-        fs::create_dir_all(&stage).unwrap();
+        fs::create_dir_all(&cache).unwrap();
         let target = root.join("ultracompress");
         fs::write(&target, "new").unwrap();
         let old = 2_000u64;
         let swap_tmp = sibling(&target, ".next");
-        let log_tmp = cache.join("1234.tmp");
+        let state_tmp = cache.join("update-check.json.1234.tmp");
+        let state = cache.join("update-check.json");
+        let foreign = root.join("notes.next");
         fs::write(&swap_tmp, "half-written").unwrap();
-        fs::write(&log_tmp, "partial write").unwrap();
-        set_mtime(&swap_tmp, old);
-        set_mtime(&log_tmp, old);
-        let stage_mtime = modified_secs(&stage).unwrap();
+        fs::write(&state_tmp, "partial write").unwrap();
+        fs::write(&state, "{}").unwrap();
+        fs::write(&foreign, "not ours").unwrap();
+        for path in [&swap_tmp, &state_tmp, &state, &foreign] {
+            set_mtime(path, old);
+        }
         assert_eq!(sweep_at(&target, &cache, "9.9.9", old + 60), 0);
-        assert!(swap_tmp.exists() && log_tmp.exists() && stage.exists());
+        assert!(swap_tmp.exists() && state_tmp.exists());
         let later = old + DEBRIS_MAX_AGE_SECS + 1;
         assert_eq!(sweep_at(&target, &cache, "9.9.9", later), 2);
         assert!(!swap_tmp.exists());
-        assert!(!log_tmp.exists());
-        assert!(stage.exists());
-        assert_eq!(
-            sweep_at(&target, &cache, "9.9.9", stage_mtime + STAGE_MAX_AGE_SECS),
-            1
-        );
-        assert!(!stage.exists());
-        assert!(!cache.join("install").exists());
-        assert!(cache.exists());
+        assert!(!state_tmp.exists());
+        assert!(state.exists() && foreign.exists() && cache.exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

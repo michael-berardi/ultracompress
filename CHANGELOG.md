@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.3 (2026-11-26) — Privacy documentation split and local-data retention
+## 0.8.3 (2026-11-27) — Privacy documentation split and local-data retention
 
 CLI and core 0.8.3; Pi adapter 0.7.1, Claude Code plugin 0.6.2 and Hermes
 engine 0.6.2. This is the first version above the published v0.8.1; the
@@ -12,8 +12,8 @@ never-tagged intermediate 0.8.2 work is folded into this entry.
   otherwise the copy expires seven days after the swap. A copy found without a
   sidecar gets a new clock when first observed, never from the old binary's
   mtime; `update --rollback` drops the sidecar and `update --clean` removes both.
-- The same successful-command path sweeps interrupted swap and state temp files
-  after an hour and abandoned install stages after a week. The update check
+- The same successful-command path sweeps interrupted swap (`.next`,
+  `.rollback`) and state `.tmp` files after an hour. The update check
   itself is unchanged: one anonymous HTTPS GET at most daily, with clear
   opt-outs; no telemetry and no changes to its gates, cache format or notices.
 - [PRIVACY.md](PRIVACY.md) is the single detailed privacy statement, with a
