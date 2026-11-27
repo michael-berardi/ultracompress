@@ -783,24 +783,29 @@ fn rollback(exe: &Path) -> Result<(), String> {
             previous.display()
         ));
     }
-    #[cfg(windows)]
-    {
-        // Swap names; the replaced file goes with the 7-day limit.
-        let aside = sibling(exe, ".rollback");
-        let _ = fs::remove_file(&aside);
-        fs::rename(exe, &aside).map_err(|e| format!("cannot roll back: {e}"))?;
-        if let Err(e) = fs::rename(&previous, exe) {
-            let _ = fs::rename(&aside, exe);
-            return Err(format!("cannot roll back: {e}"));
-        }
-        let _ = fs::rename(&aside, &previous);
-        let _ = fs::remove_file(rollback_sidecar(&previous));
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    fs::rename(&previous, exe).map_err(|e| format!("cannot roll back: {e}"))?;
+    restore_previous(exe, &previous)?;
     let _ = fs::remove_file(rollback_sidecar(&previous));
     Ok(())
+}
+
+/// Windows cannot overwrite a running binary: swap names. The replaced file
+/// becomes the new `.previous` and goes with the 7-day limit.
+#[cfg(windows)]
+fn restore_previous(exe: &Path, previous: &Path) -> Result<(), String> {
+    let aside = sibling(exe, ".rollback");
+    let _ = fs::remove_file(&aside);
+    fs::rename(exe, &aside).map_err(|e| format!("cannot roll back: {e}"))?;
+    if let Err(e) = fs::rename(previous, exe) {
+        let _ = fs::rename(&aside, exe);
+        return Err(format!("cannot roll back: {e}"));
+    }
+    let _ = fs::rename(&aside, previous);
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn restore_previous(exe: &Path, previous: &Path) -> Result<(), String> {
+    fs::rename(previous, exe).map_err(|e| format!("cannot roll back: {e}"))
 }
 
 // ---- Local-data retention (contract §4a) ---------------------------------
