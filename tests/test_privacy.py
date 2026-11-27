@@ -110,6 +110,23 @@ class PrivacyTest(unittest.TestCase):
                        "update --clean"):
             self.assertIn(phrase, privacy)
 
+    def test_privacy_md_is_the_full_split_and_inventory(self):
+        privacy = _text(ROOT / "PRIVACY.md")
+        # Every local write the merged code makes has a lifetime and a deletion path.
+        for phrase in ("makes no automatic network traffic", "Lifetime", "next snapshot write",
+                       "7 days", "14 days", "<install dir>", "update-check.json",
+                       "ultracompress.previous.json", "ultracompress.previous", "config.json",
+                       "debug.json", "<session>.jsonl", "release archive",
+                       "%LOCALAPPDATA%\\UltraCompress", "Remove-Item", "rm -rf"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, privacy)
+        # The README keeps the short form and both adapter READMEs point at the detail.
+        readme = _text(ROOT / "README.md")
+        self.assertIn("[PRIVACY.md](PRIVACY.md)", readme)
+        for adapter in (ROOT / "hermes" / "README.md", ROOT / "claude-code" / "README.md"):
+            with self.subTest(adapter=adapter.name):
+                self.assertIn("PRIVACY.md", _text(adapter))
+
     def test_no_doc_denies_the_update_check(self):
         docs = [ROOT / "README.md", ROOT / "PRIVACY.md", ROOT / "SECURITY.md", ROOT / "claude-code" / "README.md",
                 ROOT / "hermes" / "README.md", ROOT / "docs" / "updates.md"]
@@ -134,6 +151,23 @@ class PrivacyTest(unittest.TestCase):
         self.assertIn("trim_jsonl_archive", hermes)
         self.assertIn("archive_max_bytes", _text(ROOT / "hermes" / "ultracompress" / "__init__.py"))
         self.assertIn("0o600", _without_rust_tests(_text(UPDATE_RS)))
+        snapshot = _text(ROOT / "extension" / "src" / "snapshot.ts")
+        self.assertIn("MAX_SNAP_AGE_MS", snapshot)
+
+    def test_rollback_copy_and_install_debris_have_retention(self):
+        update = _without_rust_tests(_text(UPDATE_RS))
+        main = _text(ROOT / "crates" / "ultracompress-cli" / "src" / "main.rs")
+        for name in ("ROLLBACK_MAX_AGE_SECS", "STAGE_MAX_AGE_SECS", "DEBRIS_MAX_AGE_SECS",
+                     "fn sweep_local_data", "record_rollback", "ROLLBACK_OBSERVED_VERSION"):
+            with self.subTest(name=name):
+                self.assertIn(name, update)
+        # With no sidecar there is no known install time: the old binary's mtime
+        # must not be used to age out a usable rollback copy.
+        self.assertNotRegex(update, r"expired\(modified_secs\(&previous\)")
+        # The sweep runs on the successful-command path, not inside the check.
+        self.assertIn("sweep_local_data", main)
+        self.assertIn("record_rollback", update)
+        self.assertIn("swapped_at", update)
 
     def test_adapters_report_their_own_versions(self):
         index = _text(ROOT / "extension" / "index.ts")

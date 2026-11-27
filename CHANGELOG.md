@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.3 (2026-11-26) — Privacy documentation split and local-data retention
+
+CLI and core 0.8.3; Pi adapter 0.7.1, Claude Code plugin 0.6.2 and Hermes
+engine 0.6.2. This is the first version above the published v0.8.1; the
+never-tagged intermediate 0.8.2 work is folded into this entry.
+
+- A successful self-update now writes `<binary>.previous.json` beside the
+  rollback copy, recording the installed version and one Unix second. The
+  replacement binary's first successful command removes the copy and sidecar;
+  otherwise the copy expires seven days after the swap. A copy found without a
+  sidecar gets a new clock when first observed, never from the old binary's
+  mtime; `update --rollback` drops the sidecar and `update --clean` removes both.
+- The same successful-command path sweeps interrupted swap and state temp files
+  after an hour and abandoned install stages after a week. The update check
+  itself is unchanged: one anonymous HTTPS GET at most daily, with clear
+  opt-outs; no telemetry and no changes to its gates, cache format or notices.
+- [PRIVACY.md](PRIVACY.md) is the single detailed privacy statement, with a
+  table of every local write, its contents, permissions, lifetime and deletion
+  command. The README keeps a short summary and the Claude Code and Hermes
+  READMEs link the detail. The text matches the merged code's `curl` check,
+  `update-check.json`, and Pi's configurable snapshot limits (10 files, 14 days
+  and 64 MiB by default).
+- Regression tests cover the sidecar, observed copies, the debris sweep and the
+  documentation split; the three adapters carry their own one-patch bumps for
+  the changed README and retention constants.
+
 ## 0.8.1 (2026-11-26) — Commit subjects, named exceptions, sharper recall excerpts
 
 CLI and core 0.8.1; the adapters are unchanged.

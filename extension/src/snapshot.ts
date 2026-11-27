@@ -29,6 +29,10 @@ export const DEFAULT_SNAPSHOT_RETENTION: SnapshotRetention = { maxCount: 10, max
 /** Total bytes of snapshots kept per project; the newest is kept even if it alone is larger. */
 export const MAX_SNAPS_BYTES = 64 * 1024 * 1024;
 
+/** Named bounds for the privacy guard, derived from the configurable defaults. */
+export const MAX_SNAPS = DEFAULT_SNAPSHOT_RETENTION.maxCount;
+export const MAX_SNAP_AGE_MS = DEFAULT_SNAPSHOT_RETENTION.maxAgeDays * 86_400_000;
+
 /** Create/claim the snapshot directories as owner-only, even if they pre-existed with looser modes. */
 function privateSnapDir(cwd: string): string {
   const state = path.join(cwd, STATE_DIR);

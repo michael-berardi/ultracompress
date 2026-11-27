@@ -309,7 +309,14 @@ fn install_verifies_swaps_keeps_one_previous_and_cleans_temp() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["ultracompress", "ultracompress.previous"]);
+    assert_eq!(
+        names,
+        [
+            "ultracompress",
+            "ultracompress.previous",
+            "ultracompress.previous.json"
+        ]
+    );
     assert_eq!(fake.json(&fake.cache())["installed"], NEW);
 }
 
@@ -342,6 +349,7 @@ fn rollback_restores_and_skips_the_version_rolled_back_from() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(fs::read_to_string(fake.exe()).unwrap(), "older build");
     assert!(!fake.previous().exists());
+    assert!(!fake.root.join("bin/ultracompress.previous.json").exists());
     assert_eq!(fake.json(&fake.config())["skipVersion"], VERSION);
 }
 
@@ -356,6 +364,7 @@ fn previous_copy_goes_after_the_new_version_runs_once() {
     fs::write(fake.cache(), format!("{{\"installed\":\"{VERSION}\"}}")).unwrap();
     assert!(fake.run(&["version"]).status.success());
     assert!(!fake.previous().exists());
+    assert!(!fake.root.join("bin/ultracompress.previous.json").exists());
 }
 
 #[test]
@@ -396,7 +405,12 @@ fn skip_auto_and_clean_persist_and_remove_state() {
 
     fs::write(fake.previous(), "older build").unwrap();
     assert!(fake.run(&["update", "--clean"]).status.success());
-    assert!(!fake.cache().exists() && !fake.config().exists() && !fake.previous().exists());
+    assert!(
+        !fake.cache().exists()
+            && !fake.config().exists()
+            && !fake.previous().exists()
+            && !fake.root.join("bin/ultracompress.previous.json").exists()
+    );
 }
 
 #[test]

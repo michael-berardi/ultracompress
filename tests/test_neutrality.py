@@ -75,7 +75,8 @@ def _files():
 
 # The repository's own canonical URL is the one allowed use of the owner name, in shipped files.
 OWN_URL = re.compile(
-    r"(?:github\.com|img\.shields\.io/github/(?:[\w.-]+/)*?[\w.-]+?)/michael-berardi/ultracompress(?:\.git)?(?![\w.-])")
+    r"(?:api\.github\.com/repos|github\.com|img\.shields\.io/github/(?:[\w.-]+/)*?[\w.-]+?)"
+    r"/michael-berardi/ultracompress(?:\.git)?(?![\w.-])")
 
 
 def _hits(pattern):

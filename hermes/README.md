@@ -143,7 +143,8 @@ The raw recall archive is stored at `$HERMES_HOME/ultracompress/<session>.jsonl`
 in a `0700` directory as a `0600` file, bounded to `archive_max_bytes` (64 MiB by
 default). Delete it with `rm -rf "$HERMES_HOME/ultracompress"`. Your model
 provider still receives the prompts Hermes sends it. The binary runs without a
-terminal here, so its update check never runs. Details: [PRIVACY.md](../PRIVACY.md).
+terminal here, so its update check never runs. See the
+[privacy statement](../PRIVACY.md) for the full local-file inventory.
 
 ## Uninstall
 

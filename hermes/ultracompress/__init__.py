@@ -41,7 +41,7 @@ from .convert import (RECALL_TOOL, agent_replies_section, carry_forward_users, c
                       conversation_view, empty_window_brief, find_binary, private_dir, section,
                       tool_only_brief, trim_jsonl_archive, turn_chars, BRIEF_HEADING, to_pi_entries)
 
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 logger = logging.getLogger("plugins.ultracompress")
 
 PLUGIN_DIR = Path(__file__).resolve().parent

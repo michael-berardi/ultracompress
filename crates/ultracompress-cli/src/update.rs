@@ -27,6 +27,13 @@ const NOTES_MAX_CHARS: usize = 600;
 const USAGE: &str =
     "usage: ultracompress update [--yes] | --check | --skip | --auto on|off|status | --rollback | --clean";
 
+// Local retention (contract §4a): the rollback copy is tied to the version that
+// installed it, not to the old binary's mtime, and install leftovers are swept.
+const ROLLBACK_MAX_AGE_SECS: u64 = 7 * DAY;
+const STAGE_MAX_AGE_SECS: u64 = 7 * DAY;
+const DEBRIS_MAX_AGE_SECS: u64 = 3_600;
+const ROLLBACK_OBSERVED_VERSION: &str = "observed";
+
 type Version = (u64, u64, u64);
 
 /// A stable `x.y.z`, optionally `v`-prefixed. Prereleases and anything else are not versions.
@@ -475,10 +482,10 @@ fn notice_now() -> Option<String> {
     plan.notice
 }
 
-/// After a successful command: silent bookkeeping always, the notice only when
-/// both stdout and stderr are a terminal (never in hook, pipe or JSON output).
+/// After a successful command: the notice only when both stdout and stderr are
+/// a terminal (never in hook, pipe or JSON output). Local retention runs first
+/// in `main`, on the same successful-command path.
 pub fn after_command() {
-    settle();
     if !(io::stdout().is_terminal() && io::stderr().is_terminal()) {
         return;
     }
@@ -711,6 +718,9 @@ fn install(release: &Release, exe: &Path, paths: &Paths) -> Result<(), String> {
         ));
     }
     swap(exe, &staged)?;
+    // The sidecar names the installed version and the swap time. The old
+    // binary's mtime is never used as the install time.
+    record_rollback(&sibling(exe, ".previous"), &new, now());
     let mut cache: Cache = read(&paths.cache);
     cache.installed = Some(new);
     let _ = write(&paths.cache, &cache);
@@ -785,27 +795,167 @@ fn rollback(exe: &Path) -> Result<(), String> {
             return Err(format!("cannot roll back: {e}"));
         }
         let _ = fs::rename(&aside, &previous);
+        let _ = fs::remove_file(rollback_sidecar(&previous));
         Ok(())
     }
     #[cfg(not(windows))]
-    fs::rename(&previous, exe).map_err(|e| format!("cannot roll back: {e}"))
+    fs::rename(&previous, exe).map_err(|e| format!("cannot roll back: {e}"))?;
+    let _ = fs::remove_file(rollback_sidecar(&previous));
+    Ok(())
 }
 
-/// Drop the rollback copy once the new version has run successfully, or after 7 days.
-fn settle() {
-    let Ok(exe) = exe() else { return };
-    let previous = sibling(&exe, ".previous");
-    let Ok(meta) = fs::metadata(&previous) else {
+// ---- Local-data retention (contract §4a) ---------------------------------
+//
+// Only local files an install leaves behind are removed here. Nothing in this
+// section changes the check, its gates, its request or its cache format.
+
+/// `<binary>.previous.json`: one version string and one Unix second.
+fn rollback_sidecar(previous: &Path) -> PathBuf {
+    let mut name = previous.as_os_str().to_os_string();
+    name.push(".json");
+    PathBuf::from(name)
+}
+
+/// Best effort: a sidecar that cannot be written only means the copy is kept,
+/// since there is no trustworthy age to apply.
+fn record_rollback(previous: &Path, version: &str, at: u64) {
+    let path = rollback_sidecar(previous);
+    let body = json!({ "version": version, "swapped_at": at }).to_string();
+    if fs::write(&path, body).is_err() {
         return;
-    };
-    let expired = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age.as_secs() >= 7 * DAY);
-    if expired || read::<Cache>(&Paths::new().cache).installed.as_deref() == Some(VERSION) {
-        let _ = fs::remove_file(previous);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
+}
+
+fn read_rollback_marker(path: &Path) -> Option<(String, u64)> {
+    let value: Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+    let version = value.get("version")?.as_str()?.to_string();
+    let swapped_at = value.get("swapped_at")?.as_u64()?;
+    Some((version, swapped_at))
+}
+
+fn modified_secs(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|age| age.as_secs())
+}
+
+fn expired(created: Option<u64>, at: u64, max_age: u64) -> bool {
+    created
+        .map(|when| at >= when.saturating_add(max_age))
+        .unwrap_or(false)
+}
+
+/// Sweep the rollback copy and abandoned install leftovers after a successful
+/// command. Returns the number of local files and directories removed.
+pub fn sweep_local_data(current: &str) -> usize {
+    let Ok(exe) = exe() else { return 0 };
+    let paths = Paths::new();
+    let cache = paths.cache.parent().unwrap_or_else(|| Path::new("."));
+    sweep_at(&exe, cache, current, now())
+}
+
+fn sweep_at(target: &Path, cache: &Path, current: &str, at: u64) -> usize {
+    let mut removed = 0;
+    let previous = sibling(target, ".previous");
+    let sidecar = rollback_sidecar(&previous);
+    if let Some(parent) = target.parent() {
+        removed += sweep_install_debris(parent, target, at);
+    }
+    if previous.is_file() {
+        let marker = read_rollback_marker(&sidecar).or_else(|| {
+            // No marker means no known install time. An upgraded copy or one
+            // made by an older build gets a fresh clock from its first sight.
+            record_rollback(&previous, ROLLBACK_OBSERVED_VERSION, at);
+            read_rollback_marker(&sidecar)
+        });
+        let ran_ok = marker
+            .as_ref()
+            .is_some_and(|(version, _)| version == current);
+        let installed_ok = read::<Cache>(&cache.join("update-check.json"))
+            .installed
+            .as_deref()
+            == Some(current);
+        let aged = marker
+            .as_ref()
+            .is_some_and(|(_, swapped)| expired(Some(*swapped), at, ROLLBACK_MAX_AGE_SECS));
+        if (ran_ok || installed_ok || aged) && fs::remove_file(&previous).is_ok() {
+            removed += 1;
+        }
+    }
+    if !previous.exists() && fs::remove_file(&sidecar).is_ok() {
+        removed += 1;
+    }
+    removed + sweep_cache_debris(cache, at)
+}
+
+/// Swap and rollback temp files left by an interrupted install are debris after
+/// an hour. No check, cache or config state is touched.
+fn sweep_install_debris(parent: &Path, target: &Path, at: u64) -> usize {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return 0;
+    };
+    let base = target
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let swap_tmps = [format!("{base}.next"), format!("{base}.rollback")];
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !swap_tmps.iter().any(|tmp| tmp == &name) && !name.starts_with(".ultracompress-new-") {
+            continue;
+        }
+        if expired(modified_secs(&entry.path()), at, DEBRIS_MAX_AGE_SECS)
+            && fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// Abandoned install stages expire after a week; half-written state temp files
+/// after an hour. The state files themselves and the cache folder stay.
+fn sweep_cache_debris(cache: &Path, at: u64) -> usize {
+    let mut removed = 0;
+    if let Ok(entries) = fs::read_dir(cache) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".tmp") || !entry.path().is_file() {
+                continue;
+            }
+            if expired(modified_secs(&entry.path()), at, DEBRIS_MAX_AGE_SECS)
+                && fs::remove_file(entry.path()).is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
+    let stage_root = cache.join("install");
+    if let Ok(entries) = fs::read_dir(&stage_root) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            if expired(modified_secs(&entry.path()), at, STAGE_MAX_AGE_SECS)
+                && fs::remove_dir_all(entry.path()).is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
+    let _ = fs::remove_dir(&stage_root); // only when empty
+    removed
 }
 
 // ---------------------------------------------------------------- command
@@ -1032,9 +1182,11 @@ fn roll_back(paths: &Paths) -> i32 {
 /// Uninstall helper: removes the update cache, settings, log and rollback copy.
 fn clean(paths: &Paths) -> i32 {
     let previous = exe().ok().map(|exe| sibling(&exe, ".previous"));
+    let sidecar = previous.as_ref().map(|path| rollback_sidecar(path));
     for path in [&paths.cache, &paths.config, &paths.log]
         .into_iter()
         .chain(previous.as_ref())
+        .chain(sidecar.as_ref())
     {
         let _ = fs::remove_file(path);
         if let Some(dir) = path.parent() {
@@ -1308,5 +1460,122 @@ mod tests {
         assert_eq!(paths.cache, PathBuf::from("/c/update-check.json"));
         assert_eq!(paths.log, PathBuf::from("/c/update.log"));
         assert_eq!(paths.config, PathBuf::from("/s/config.json"));
+    }
+
+    fn set_mtime(path: &Path, secs: u64) {
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn rollback_copy_goes_away_once_the_replacement_runs() {
+        let root = temp("sweep-ran");
+        let cache = root.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let target = root.join("ultracompress");
+        let previous = sibling(&target, ".previous");
+        fs::write(&target, "new").unwrap();
+        fs::write(&previous, "old").unwrap();
+        record_rollback(&previous, "9.9.9", 1_000);
+        assert!(rollback_sidecar(&previous).exists());
+        assert_eq!(sweep_at(&target, &cache, "9.9.9", 1_060), 2);
+        assert!(!previous.exists());
+        assert!(!rollback_sidecar(&previous).exists());
+        assert!(target.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_copy_survives_until_a_successful_run_or_seven_days() {
+        let root = temp("sweep-wait");
+        let cache = root.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let target = root.join("ultracompress");
+        let previous = sibling(&target, ".previous");
+        fs::write(&target, "new").unwrap();
+        fs::write(&previous, "old").unwrap();
+        record_rollback(&previous, "9.9.9", 1_000);
+        assert_eq!(sweep_at(&target, &cache, "9.9.8", 1_060), 0);
+        assert!(previous.exists());
+        assert_eq!(
+            sweep_at(&target, &cache, "9.9.8", 1_000 + ROLLBACK_MAX_AGE_SECS),
+            2
+        );
+        assert!(!previous.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_without_a_sidecar_is_not_aged_by_the_old_binary_mtime() {
+        let root = temp("sweep-observed");
+        let cache = root.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let target = root.join("ultracompress");
+        let previous = sibling(&target, ".previous");
+        fs::write(&target, "new").unwrap();
+        fs::write(&previous, "old").unwrap();
+        set_mtime(&previous, 1); // an ancient binary, not an install time
+        let observed_at = 10_000 + ROLLBACK_MAX_AGE_SECS;
+        assert_eq!(sweep_at(&target, &cache, "9.9.8", observed_at), 0);
+        assert!(previous.exists());
+        assert_eq!(
+            read_rollback_marker(&rollback_sidecar(&previous)),
+            Some((ROLLBACK_OBSERVED_VERSION.to_string(), observed_at))
+        );
+        assert_eq!(
+            sweep_at(
+                &target,
+                &cache,
+                "9.9.8",
+                observed_at + ROLLBACK_MAX_AGE_SECS - 1
+            ),
+            0
+        );
+        assert_eq!(
+            sweep_at(
+                &target,
+                &cache,
+                "9.9.8",
+                observed_at + ROLLBACK_MAX_AGE_SECS
+            ),
+            2
+        );
+        assert!(!previous.exists());
+        assert!(!rollback_sidecar(&previous).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_installs_leave_no_debris() {
+        let root = temp("sweep-debris");
+        let cache = root.join("cache");
+        let stage = cache.join("install").join("v9.9.9");
+        fs::create_dir_all(&stage).unwrap();
+        let target = root.join("ultracompress");
+        fs::write(&target, "new").unwrap();
+        let old = 2_000u64;
+        let swap_tmp = sibling(&target, ".next");
+        let log_tmp = cache.join("1234.tmp");
+        fs::write(&swap_tmp, "half-written").unwrap();
+        fs::write(&log_tmp, "partial write").unwrap();
+        set_mtime(&swap_tmp, old);
+        set_mtime(&log_tmp, old);
+        let stage_mtime = modified_secs(&stage).unwrap();
+        assert_eq!(sweep_at(&target, &cache, "9.9.9", old + 60), 0);
+        assert!(swap_tmp.exists() && log_tmp.exists() && stage.exists());
+        let later = old + DEBRIS_MAX_AGE_SECS + 1;
+        assert_eq!(sweep_at(&target, &cache, "9.9.9", later), 2);
+        assert!(!swap_tmp.exists());
+        assert!(!log_tmp.exists());
+        assert!(stage.exists());
+        assert_eq!(
+            sweep_at(&target, &cache, "9.9.9", stage_mtime + STAGE_MAX_AGE_SECS),
+            1
+        );
+        assert!(!stage.exists());
+        assert!(!cache.join("install").exists());
+        assert!(cache.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }

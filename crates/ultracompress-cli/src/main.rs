@@ -52,6 +52,10 @@ fn main() {
         "__update-background" => std::process::exit(update::background()),
         other => die(&format!("unknown command '{other}'")),
     }
+    // Local retention after a successful command: the rollback copy identified
+    // by the replacement's sidecar, plus files left by interrupted installs.
+    // The update check itself is unchanged and still runs last.
+    update::sweep_local_data(ultracompress_core::VERSION);
     // Silent outside a terminal: hooks, pipes and JSON readers see nothing.
     update::after_command();
 }
