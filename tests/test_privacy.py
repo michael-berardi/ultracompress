@@ -106,9 +106,33 @@ class PrivacyTest(unittest.TestCase):
         readme = _text(ROOT / "README.md")
         self.assertIn("## Privacy", readme)
         privacy = readme.split("## Privacy", 1)[1].split("\n## ", 1)[0]
-        for phrase in ("sends nothing over the network", "no telemetry", "0700", "0600",
-                       "64 MiB", "rm -rf", "SHA-256", "model provider"):
-            self.assertIn(phrase, privacy)
+        # The README keeps the short form the contract asks for: a handful of
+        # lines that point at the detail rather than repeating it.
+        lines = [line for line in privacy.splitlines() if line.strip()]
+        self.assertLessEqual(len(lines), 6)
+        self.assertIn("[PRIVACY.md](PRIVACY.md)", privacy)
+        self.assertIn("no telemetry", privacy)
+        self.assertIn("sends nothing over the network", privacy)
+
+    def test_privacy_md_holds_the_detail_and_the_file_inventory(self):
+        privacy = _text(ROOT / "PRIVACY.md")
+        for phrase in ("sends nothing", "no telemetry", "0700", "0600", "64 MiB",
+                       "SHA-256", "model provider", "$TMPDIR", "rm -rf"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, privacy)
+        # Every local write named by the contract has a documented lifetime.
+        for path in ("ultracompress.json", ".steak-pi/snaps", "debug.json",
+                     "update.json", "check.claim", "install.log", "install/<tag>",
+                     "ultracompress.previous", "config.json", "<session>.jsonl"):
+            with self.subTest(path=path):
+                self.assertIn(path, privacy)
+        self.assertIn("Lifetime", privacy)
+        self.assertIn("at most 30 days", privacy)
+        self.assertIn("7 days", privacy)
+        # The refresh hand-offs point at the detail, not at a section summary.
+        for adapter in (ROOT / "hermes" / "README.md", ROOT / "claude-code" / "README.md"):
+            with self.subTest(adapter=adapter.name):
+                self.assertIn("PRIVACY.md", _text(adapter))
 
     def test_private_storage_and_retention_guards_present(self):
         snapshot = _text(ROOT / "extension" / "src" / "snapshot.ts")
@@ -120,9 +144,24 @@ class PrivacyTest(unittest.TestCase):
             self.assertIn("0o600", text)
         self.assertIn("pruneSnaps", snapshot)
         self.assertIn("MAX_SNAPS_BYTES", snapshot)
+        self.assertIn("MAX_SNAP_AGE_MS", snapshot)
         self.assertNotIn("/tmp/ultracompress-debug.json", debug)
         self.assertIn("trim_jsonl_archive", hermes)
         self.assertIn("archive_max_bytes", _text(ROOT / "hermes" / "ultracompress" / "__init__.py"))
+
+    def test_rollback_copy_and_install_debris_have_retention(self):
+        update = _text(ROOT / "crates" / "ultracompress-cli" / "src" / "update.rs")
+        main = _text(ROOT / "crates" / "ultracompress-cli" / "src" / "main.rs")
+        self.assertIn("ROLLBACK_MAX_AGE_SECS", update)
+        self.assertIn("STAGE_MAX_AGE_SECS", update)
+        self.assertIn("DEBRIS_MAX_AGE_SECS", update)
+        self.assertIn("fn sweep_local_data", update)
+        self.assertIn("record_rollback", update)
+        # The sweep runs on the successful path, not inside the check itself.
+        self.assertIn("sweep_local_data", main)
+        # The update check keeps its single request and fixed user agent.
+        self.assertIn("USER_AGENT", update)
+        self.assertNotRegex(update, r"(?i)(Authorization|api[_-]?key|client[_-]?secret)")
 
     def test_update_contract_marker_and_docs(self):
         docs = _text(ROOT / "docs" / "updates.md")

@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 REPOSITORY = "https://github.com/michael-berardi/ultracompress"
 CHECK_INTERVAL = 24 * 60 * 60
 CHECK_TIMEOUT = 4.0

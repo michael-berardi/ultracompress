@@ -46,7 +46,7 @@ import {
 
 const AUTO_CONTINUE_CUSTOM_TYPE = "ultracompress-auto-continue";
 /** Kept in sync with package.json by the repository privacy guard test. */
-const ADAPTER_VERSION = "0.8.2";
+const ADAPTER_VERSION = "0.8.3";
 
 export default function ultraCompressExtension(pi: ExtensionAPI): void {
   const settings: UltraCompressSettings = loadSettings();

@@ -9,7 +9,7 @@ including messages no longer in the model's context.
 
 ## Install
 
-CLI version in this checkout: **0.8.2** (newest published release: [v0.8.1](https://github.com/michael-berardi/ultracompress/releases/tag/v0.8.1)). Install a prebuilt binary:
+CLI version in this checkout: **0.8.3** (newest published release: [v0.8.1](https://github.com/michael-berardi/ultracompress/releases/tag/v0.8.1)). Install a prebuilt binary:
 
 macOS and Linux:
 
@@ -65,7 +65,7 @@ Interactive use checks for a newer public release once per 24 hours. The check i
 anonymous and never appears in JSON output; auto-install is opt-in. See
 [Updates](docs/updates.md) for the commands (`ultracompress update --check`,
 `--skip`, `--auto on|off|status`, `--rollback`), the opt-out, and the privacy
-details. The CLI and all four adapters in this checkout are aligned at **0.8.2**,
+details. The CLI and all four adapters in this checkout are aligned at **0.8.3**,
 above the published [v0.8.1](https://github.com/michael-berardi/ultracompress/releases/tag/v0.8.1)
 release, so the check does not announce a release this build has already
 superseded. The installer links above are pinned to the assets published with
@@ -222,57 +222,12 @@ scripts make provider calls and are not required for ordinary unit testing.
 
 ## Privacy
 
-The CLI sends nothing over the network except one anonymous update check. It
-reads the session file or stdin you give it and writes JSON to stdout and errors
-to stderr; the check happens after your command, in the background, at most once
-per 24 hours, only in interactive use. It requests only this repository's public
-GitHub latest-release record with a fixed `ultracompress-update-check` user
-agent: no install id, version, usage, machine data, or credentials. There is no
-telemetry, analytics, crash reporting, unique install ID or machine fingerprint,
-and no dependency with its own telemetry is run by the tool. UltraCompress has
-no telemetry at all. Checks are off in
-CI, non-TTY and agent/headless sessions; set `ULTRACOMPRESS_NO_UPDATE_CHECK=1`
-or `updates.checkEnabled: false` to opt out. Automatic installation is opt-in.
-See [Updates](docs/updates.md).
-
-When **you** run an installer, it downloads the release archive and `SHA256SUMS`
-from GitHub over HTTPS, verifies the SHA-256 before installing, and sends no usage
-data. The macOS binary is also signed and notarized. To remove an install, delete
-`~/.ultracompress` (or `%LOCALAPPDATA%\UltraCompress`) and the shim.
-
-Your agent host may send data to a model provider you configured: prompts go to
-that provider as usual, and snap-frame PNGs generated locally go to it when
-snapshots are enabled on a supported provider. UltraCompress chooses no provider
-and contacts none itself. The badges on this README are fetched by the site
-rendering it, not by the tool.
-
-Local files:
-
-- Pi writes `~/.pi/agent/ultracompress.json` (settings) and full pre-compaction
-  snapshots in `<project>/.steak-pi/snaps/`. Snapshots can contain session text.
-  Directories are `0700`, files `0600`, and at most the newest 20 snapshots within
-  64 MiB are kept (the newest is kept even if one snapshot is larger).
-  The folder is inside your project, so add `.steak-pi/` to its `.gitignore`.
-  Delete them with `rm -rf <project>/.steak-pi/snaps` and
-  `rm ~/.pi/agent/ultracompress.json`.
-- Claude Code reads the local transcript and writes no files of its own; its
-  transcript and logs belong to Claude Code.
-- Hermes writes condensed turns, including tool output, to
-  `$HERMES_HOME/ultracompress/<session>.jsonl` for recall. The directory is
-  `0700`, the file `0600`, and the newest whole entries within 64 MiB are kept.
-  Set `archive_max_bytes` in the adapter's `settings.json` to change the budget.
-  Delete the archive with `rm -rf "$HERMES_HOME/ultracompress"`.
-- Update checks share one `0600` `update.json` in the platform cache directory
-  (`~/Library/Caches/ultracompress` on macOS, `%LOCALAPPDATA%\ultracompress` on
-  Windows, `~/.cache/ultracompress` elsewhere, or `$XDG_CACHE_HOME/ultracompress`).
-  The CLI, Pi and Hermes all read the same Unix-second timestamps, so the daily
-  check is shared. The opt-in auto-install setting lives in the platform config
-  directory. Delete them with
-  `rm -rf ~/.cache/ultracompress ~/.config/ultracompress` (adjust for your platform).
-- With `debug: true`, Pi overwrites one diagnostics file at
-  `~/.local/state/ultracompress/debug.json` (`$XDG_STATE_HOME` overrides the
-  state root). It is `0600` in a `0700` directory and can contain a short summary
-  preview. Delete it with `rm -rf ~/.local/state/ultracompress`.
+UltraCompress sends nothing over the network except one anonymous release
+check, records no telemetry, and reads only the session file or stdin you give
+it. Local files can hold session text, so each is owner-only (`0700`/`0600`)
+and bounded by count, size or age. Every local write, its lifetime and its
+deletion command are listed in [PRIVACY.md](PRIVACY.md); the check itself is in
+[Updates](docs/updates.md).
 
 ## Measurements and security
 

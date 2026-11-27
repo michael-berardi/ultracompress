@@ -423,7 +423,185 @@ pub fn rollback(target: &Path) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
     }
-    std::fs::rename(&tmp, target).map_err(|e| format!("rollback failed: {e}"))
+    let restored = std::fs::rename(&tmp, target).map_err(|e| format!("rollback failed: {e}"));
+    if restored.is_ok() {
+        // The kept copy now describes nothing that is installed: drop the
+        // sidecar so retention falls back to the plain age rule.
+        let _ = std::fs::remove_file(rollback_sidecar(&previous));
+    }
+    restored
+}
+
+// ---- Local-data retention (contract §4a) ---------------------------------
+//
+// Everything below removes local files an install leaves behind. It touches no
+// check, gate, notice or cache rule: those live in `ultracompress_core::update`
+// and are unchanged.
+
+/// Contract §4a: the rollback copy lives beside the installed binary until the
+/// replacement has run successfully once, and never longer than a week.
+pub const ROLLBACK_MAX_AGE_SECS: u64 = 7 * 86_400;
+/// A stage directory left by an interrupted install is debris after a week.
+pub const STAGE_MAX_AGE_SECS: u64 = 7 * 86_400;
+/// A half-written temp file left by an interrupted write is debris after an hour.
+pub const DEBRIS_MAX_AGE_SECS: u64 = 3_600;
+
+/// `<target>.previous.json` — one version string and one Unix second. It holds
+/// no session text, no identifiers and no check state.
+fn rollback_sidecar(previous: &Path) -> PathBuf {
+    let mut name = previous.as_os_str().to_os_string();
+    name.push(".json");
+    PathBuf::from(name)
+}
+
+/// Best effort: a sidecar that cannot be written only means retention falls
+/// back to the age rule, which never costs the rollback copy early.
+fn record_rollback(previous: &Path, version: &str, now: u64) {
+    let body = serde_json::json!({ "version": version, "swapped_at": now }).to_string();
+    let path = rollback_sidecar(previous);
+    if std::fs::write(&path, body).is_err() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+fn read_rollback_marker(path: &Path) -> Option<(String, u64)> {
+    let body = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let version = value.get("version")?.as_str()?.to_string();
+    let swapped_at = value.get("swapped_at")?.as_u64()?;
+    Some((version, swapped_at))
+}
+
+fn modified_secs(path: &Path) -> Option<u64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|age| age.as_secs())
+}
+
+/// Staging and log temp names end in the Unix second they were created:
+/// `.ultracompress-new-<pid>-<secs>` and `.install-<pid>-<secs>.log.tmp`.
+fn named_secs(name: &str) -> Option<u64> {
+    let stem = name.strip_suffix(".log.tmp").unwrap_or(name);
+    stem.rsplit('-').next()?.parse::<u64>().ok()
+}
+
+fn expired(created: Option<u64>, now: u64, max_age: u64) -> bool {
+    created
+        .map(|at| now >= at.saturating_add(max_age))
+        .unwrap_or(false)
+}
+
+/// Sweep the install directory: the rollback copy once the replacement has run
+/// successfully (or after a week) and temp files a crash left behind.
+pub fn sweep_local_data(current: &str) -> usize {
+    let Ok(target) = install_target() else {
+        return 0;
+    };
+    sweep_at(
+        &target,
+        &contract::cache_dir(),
+        current,
+        contract::now_secs(),
+    )
+}
+
+fn sweep_at(target: &Path, cache: &Path, current: &str, now: u64) -> usize {
+    let mut removed = 0;
+    let previous = target.with_extension("previous");
+    let sidecar = rollback_sidecar(&previous);
+    if let Some(parent) = target.parent() {
+        removed += sweep_install_debris(parent, target, now);
+    }
+    if previous.exists() {
+        let marker = read_rollback_marker(&sidecar);
+        // This process is the installed binary and its command has finished, so
+        // a sidecar naming the running version proves the replacement works.
+        let ran_ok = marker
+            .as_ref()
+            .map(|(version, _)| version == current)
+            .unwrap_or(false);
+        let aged = match &marker {
+            Some((_, swapped_at)) => expired(Some(*swapped_at), now, ROLLBACK_MAX_AGE_SECS),
+            None => expired(modified_secs(&previous), now, ROLLBACK_MAX_AGE_SECS),
+        };
+        if (ran_ok || aged) && std::fs::remove_file(&previous).is_ok() {
+            removed += 1;
+        }
+    }
+    if !previous.exists() && std::fs::remove_file(&sidecar).is_ok() {
+        removed += 1;
+    }
+    removed + sweep_cache_debris(cache, now)
+}
+
+fn sweep_install_debris(parent: &Path, target: &Path, now: u64) -> usize {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return 0;
+    };
+    let rollback_tmp = format!(
+        "{}.rollback-tmp",
+        target.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let created = if name.starts_with(".ultracompress-new-") {
+            named_secs(&name)
+        } else if name == rollback_tmp {
+            modified_secs(&entry.path())
+        } else {
+            continue;
+        };
+        if expired(created, now, DEBRIS_MAX_AGE_SECS) && std::fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The shared cache keeps one `update.json`, the opt-in install log and the
+/// claim file. Staging trees and log temp files are debris once abandoned.
+fn sweep_cache_debris(cache: &Path, now: u64) -> usize {
+    let mut removed = 0;
+    if let Ok(entries) = std::fs::read_dir(cache) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".log.tmp") {
+                continue;
+            }
+            if expired(named_secs(&name), now, DEBRIS_MAX_AGE_SECS)
+                && std::fs::remove_file(entry.path()).is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
+    let stage_root = cache.join("install");
+    if let Ok(entries) = std::fs::read_dir(&stage_root) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            if expired(modified_secs(&entry.path()), now, STAGE_MAX_AGE_SECS)
+                && std::fs::remove_dir_all(entry.path()).is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
+    // Remove the stage root only once it is empty; the cache itself stays.
+    let _ = std::fs::remove_dir(&stage_root);
+    removed
 }
 
 fn download(url: &str, dest: &Path, timeout: u64) -> Result<(), String> {
@@ -545,6 +723,11 @@ fn install_from_stage(
         ));
     }
     swap_binary(&staged, target)?;
+    record_rollback(
+        &target.with_extension("previous"),
+        &release.version,
+        contract::now_secs(),
+    );
     if !quiet {
         println!(
             "Installed ultracompress {}. The new version applies on the next start.",
@@ -778,6 +961,102 @@ mod tests {
             .to_string_lossy()
             .ends_with(".tmp")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rollback_copy_goes_away_after_the_replacement_runs() {
+        let root = std::env::temp_dir().join(format!("uc-sweep-ran-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        let install = root.join("install");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::create_dir_all(&install).unwrap();
+        let target = install.join("ultracompress");
+        let previous = target.with_extension("previous");
+        std::fs::write(&target, b"new").unwrap();
+        std::fs::write(&previous, b"old").unwrap();
+        record_rollback(&previous, "9.9.9", 1_000);
+        assert!(
+            rollback_sidecar(&previous).exists(),
+            "sidecar carries the version"
+        );
+
+        // The installed binary runs its first successful command: 9.9.9 is the
+        // running version, so the rollback copy and its sidecar are debris now.
+        let removed = sweep_at(&target, &cache, "9.9.9", 1_060);
+        assert_eq!(removed, 2);
+        assert!(!previous.exists());
+        assert!(!rollback_sidecar(&previous).exists());
+        assert!(target.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rollback_copy_survives_until_a_successful_run_or_a_week() {
+        let root = std::env::temp_dir().join(format!("uc-sweep-wait-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let target = root.join("ultracompress");
+        let previous = target.with_extension("previous");
+        std::fs::write(&target, b"new").unwrap();
+        std::fs::write(&previous, b"old").unwrap();
+        record_rollback(&previous, "9.9.9", 1_000);
+
+        // Another version is running (a rollback, or an install not yet used):
+        // the copy stays available for `update --rollback`.
+        assert_eq!(sweep_at(&target, &cache, "9.9.8", 1_060), 0);
+        assert!(previous.exists());
+
+        // Seven days after the swap the copy expires even if it never ran.
+        assert_eq!(
+            sweep_at(&target, &cache, "9.9.8", 1_000 + ROLLBACK_MAX_AGE_SECS),
+            2
+        );
+        assert!(!previous.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn interrupted_installs_leave_no_debris() {
+        let root = std::env::temp_dir().join(format!("uc-sweep-debris-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(cache.join("install").join("v9.9.9")).unwrap();
+        let target = root.join("ultracompress");
+        std::fs::write(&target, b"new").unwrap();
+        let old = 2_000u64;
+        // Named with the second they were created, so the sweep needs no clock read.
+        let swap_tmp = root.join(format!(".ultracompress-new-{}-{old}", std::process::id()));
+        std::fs::write(&swap_tmp, b"half-written").unwrap();
+        let log_tmp = cache.join(format!(".install-{}-{old}.log.tmp", std::process::id()));
+        std::fs::write(&log_tmp, b"partial log").unwrap();
+        let stage = cache.join("install").join("v9.9.9");
+        let stage_mtime = modified_secs(&stage).unwrap();
+
+        // Nothing is old enough yet.
+        assert_eq!(sweep_at(&target, &cache, "9.9.9", old + 60), 0);
+        assert!(swap_tmp.exists() && log_tmp.exists() && stage.exists());
+
+        let now = old + DEBRIS_MAX_AGE_SECS + 1;
+        assert_eq!(sweep_at(&target, &cache, "9.9.9", now), 2);
+        assert!(!swap_tmp.exists(), "interrupted swap temp is removed");
+        assert!(!log_tmp.exists(), "interrupted log temp is removed");
+        assert!(stage.exists(), "a fresh stage is not swept mid-install");
+
+        // An abandoned stage tree expires after a week.
+        assert_eq!(
+            sweep_at(&target, &cache, "9.9.9", stage_mtime + STAGE_MAX_AGE_SECS),
+            1
+        );
+        assert!(!stage.exists());
+        assert!(
+            !cache.join("install").exists(),
+            "empty stage root is removed"
+        );
+        assert!(cache.exists(), "the shared cache itself stays");
+        assert!(target.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

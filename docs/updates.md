@@ -73,7 +73,7 @@ A notice appears at most once per 24 hours per version. Skipping a version
 hides that version only; a newer release notifies again. The notice reads:
 
 ```text
-ultracompress 0.8.3 available (you have 0.8.2) · run: ultracompress update
+ultracompress 0.8.4 available (you have 0.8.3) · run: ultracompress update
 turn on automatic updates: ultracompress update --auto on · skip: ultracompress update --skip
 ```
 
@@ -94,8 +94,9 @@ bounded file (256 KB maximum; the oldest lines are dropped), written `0600`.
 On platforms that support it (`nice`), the auto-install worker runs at reduced
 priority so it never competes with your command. The download, archive and
 unpacked staging tree under the shared cache is removed after both success and
-failure; only the rollback copy of the binary is kept. A failure leaves the
-current binary working, records the cause, and falls back to the notice. An
+failure; only the rollback copy of the binary is kept, and it has a lifetime
+(see [Retention in contract §4a](#retention-in-contract-4a)). A failure leaves
+the current binary working, records the cause, and falls back to the notice. An
 environment variable never turns auto-install on.
 
 ## Install safety
@@ -103,34 +104,46 @@ environment variable never turns auto-install on.
 The CLI fetches `SHA256SUMS` and the platform release asset and verifies the
 SHA-256 before replacing anything. It checks the downloaded binary's own
 `--version`, swaps it atomically, and keeps exactly one `*.previous` copy for
-`update --rollback`. Package-manager installs name the command with the new
+`update --rollback`, which the retention sweep later removes. Package-manager installs name the command with the new
 release version; staged downloads and unpacked trees are always cleaned up. Package-manager installs (Cargo, Homebrew, npm) are
 detected and are never overwritten: the command names the right manager
 command instead.
 
-### Known gap in contract §4a
+### Retention in contract §4a
 
-Contract §4a asks for a rollback copy to be deleted after the new version has
-run successfully once, and at the latest within seven days; it also asks
-`update --auto off` to clear saved auto state. This build does **not** implement
-that cleanup. Every successful swap keeps one `*.previous` binary beside the
-installed executable **indefinitely**: there is no first-successful-run check
-and no seven-day expiry. Delete that file manually when you no longer need it,
-or run `ultracompress update --rollback` to restore it first.
-`ultracompress update --auto off` writes `auto_install = false` to the config
-and stops future automatic installs, but it **does not delete the rollback
-copy** and does not start any timed cleanup.
+Contract §4a asks for the rollback copy to be deleted after the new version has
+run successfully once, and at the latest within seven days. Retained state now
+carries a lifetime:
 
-## Documentation deviation (round-5 N5)
+- A successful swap writes `*.previous` plus a `*.previous.json` sidecar holding
+  the installed version string and one Unix second. The first successful
+  command run by the replacement binary removes both; if the replacement never
+  runs, the copy expires seven days after the swap. `update --rollback` restores
+  the copy and drops the sidecar, after which the plain seven-day age rule
+  applies.
+- Swap temp files beside the binary (`.ultracompress-new-*`, `*.rollback-tmp`),
+  half-written `install.log` temp files, and abandoned stage trees under
+  `<cache>/ultracompress/install/` are swept by the same pass: an hour for temp
+  files, seven days for a stage tree. The shared `update.json`, the bounded
+  `install.log` and the opt-in config stay.
+- The sweep runs after a successful command and removes local files only. What
+  the check sends, when it runs, its gates and its cache format are unchanged.
+- `ultracompress update --auto off` still only writes `auto_install = false` to
+  the config; it does not delete the rollback copy, which the sweep handles on
+  age.
 
-The 2026-11-26 contract specifies a short Privacy notice. This repository keeps
-the longer `## Privacy` section in `README.md` instead. That section states that
-the CLI sends nothing except the anonymous release check, that there is no
-telemetry, when checks are off and how to opt out, that user-run installers
-verify SHA-256, and which local files hold session text with their `0700`/`0600`
-permissions, `64 MiB` retention and deletion commands. The detailed form is
-intentional and includes what the contract's short form requires; keeping it
-does not change any privacy behavior.
+## Privacy documentation layout (round-5 N5, resolved)
+
+The 2026-11-26 contract asks for a short Privacy notice. `README.md` now keeps
+the short form: six lines that state the single anonymous check, the absence of
+telemetry, the owner-only permissions and the bounded retention, and that link
+[`PRIVACY.md`](../PRIVACY.md). All detail lives there as one table of every local
+write with its contents, its lifetime and its deletion command, so the short
+form no longer competes with the detailed one.
+
+Snapshot pruning now also expires full-session snapshots after 30 days, always
+keeping the newest, and the Hermes recall archive keeps its `archive_max_bytes`
+bound. Neither change alters retention of the shared update cache.
 
 ## Compatibility notes
 

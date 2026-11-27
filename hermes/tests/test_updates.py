@@ -21,7 +21,7 @@ class HermesUpdateTest(unittest.TestCase):
         self.path = Path(self.temp.name, "cache", "update.json")
 
     def test_version_comparison_and_stable_releases(self):
-        self.assertTrue(UPDATE.is_newer("0.8.3", UPDATE.VERSION))
+        self.assertTrue(UPDATE.is_newer("0.8.4", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("0.8.1", UPDATE.VERSION))  # published v0.8.1 is older
         self.assertFalse(UPDATE.is_newer("0.8.0", UPDATE.VERSION))
         self.assertFalse(UPDATE.is_newer("0.6.8", UPDATE.VERSION))
@@ -62,7 +62,7 @@ class HermesUpdateTest(unittest.TestCase):
         self.assertTrue(UPDATE.check_due(cached, cached["checked_at"] + UPDATE.CHECK_INTERVAL + 1))
 
     def test_notice_frequency_skip_and_report(self):
-        release = {"version": "0.8.3", "notes": "notes"}
+        release = {"version": "0.8.4", "notes": "notes"}
         state = dict(UPDATE.DEFAULT_STATE)
         now = 1_700_000_000.0
         self.assertTrue(UPDATE.showable(state, release, UPDATE.VERSION, now))
@@ -71,9 +71,9 @@ class HermesUpdateTest(unittest.TestCase):
         self.assertTrue(UPDATE.showable(state, release, UPDATE.VERSION, now + UPDATE.CHECK_INTERVAL))
         UPDATE.skip(state, release["version"])
         self.assertFalse(UPDATE.showable(state, release, UPDATE.VERSION, now + UPDATE.CHECK_INTERVAL * 2))
-        self.assertTrue(UPDATE.showable(state, {"version": "0.8.4", "notes": ""}, UPDATE.VERSION, now))
+        self.assertTrue(UPDATE.showable(state, {"version": "0.8.5", "notes": ""}, UPDATE.VERSION, now))
         text = UPDATE.notice(release, UPDATE.VERSION)
-        self.assertIn(f"ultracompress 0.8.3 available (you have {UPDATE.VERSION})", text)
+        self.assertIn(f"ultracompress 0.8.4 available (you have {UPDATE.VERSION})", text)
         self.assertIn("update --auto on", text)
         self.assertIn("update --skip", text)
         self.assertNotIn("notes", text)

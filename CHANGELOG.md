@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.3 (2026-11-26) — Privacy doc split and local-data retention
+
+CLI/core 0.8.3; Pi, Claude Code and Hermes adapters 0.8.3.
+
+- Split the privacy documentation: `README.md` now keeps a six-line `## Privacy`
+  section that links the new [`PRIVACY.md`](PRIVACY.md). That page is the single
+  detailed statement and carries one table of every local write — Pi settings and
+  snapshots, the optional Pi debug file, the Hermes recall archive, the shared
+  update cache, claim file, install log, install stage, rollback copy and update
+  config — with its contents, `0700`/`0600` permissions, lifetime and deletion
+  command. The Hermes and Claude Code adapter READMEs link it instead of the
+  README section. No network behavior changed.
+- Implemented the contract §4a retention the previous entry recorded as a gap. A
+  successful swap now writes a `*.previous.json` sidecar (installed version and
+  one Unix second); the first successful command run by the replacement binary
+  removes the rollback copy and the sidecar, and if the replacement never runs
+  the copy expires seven days after the swap. `update --rollback` restores the
+  copy and drops the sidecar. Update-check code is untouched: what the check
+  sends, when it runs, its gates and its cache format are unchanged.
+- Added the matching debris sweep on the successful-command path: interrupted
+  swap temp files and half-written `install.log` temp files are removed after an
+  hour, and stage trees abandoned under `<cache>/ultracompress/install/` after
+  seven days. The shared `update.json`, the bounded `install.log` and the opt-in
+  config stay. The install directory therefore keeps no permanent debris.
+- Pi snapshots now also expire: after each snapshot the older files are pruned to
+  the newest 20 within 64 MiB **and** at most 30 days old, with the newest always
+  kept, so full session text no longer stays in a project folder indefinitely.
+- Added regression tests for each rule (Rust retention, Vitest snapshot age,
+  privacy guard for the doc split and the inventory) and bumped every aligned
+  manifest and constant to 0.8.3.
+
 ## 0.8.2 (2026-11-26) — Resolve the published v0.8.1 collision (B1)
 
 - Verified that origin now has the annotated `v0.8.1` tag (commit `22d024d`)

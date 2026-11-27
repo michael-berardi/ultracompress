@@ -31,7 +31,7 @@ function fakeFetch(body: string, status = 200) {
 
 describe("update contract (Pi adapter)", () => {
   it("compares only stable x.y.z versions", () => {
-    expect(isNewer("0.8.3", PACKAGE_VERSION)).toBe(true);
+    expect(isNewer("0.8.4", PACKAGE_VERSION)).toBe(true);
     expect(isNewer("0.8.1", PACKAGE_VERSION)).toBe(false); // published v0.8.1 is older
     expect(isNewer("0.8.0", PACKAGE_VERSION)).toBe(false);
     expect(isNewer("0.6.8", PACKAGE_VERSION)).toBe(false);

@@ -16,9 +16,11 @@ import * as path from "node:path";
 export const STATE_DIR = ".steak-pi";
 export const SNAPS_DIR = "snaps";
 
-/** Local snapshots hold full session text: private directory, private files, bounded count and size. */
+/** Local snapshots hold full session text: private directory, private files, bounded count, size and age. */
 export const MAX_SNAPS = 20;
 export const MAX_SNAPS_BYTES = 64 * 1024 * 1024;
+/** Full session text is not kept forever: snapshots older than this are pruned. */
+export const MAX_SNAP_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Create/claim the snapshot directory as owner-only, even if it pre-existed with looser modes. */
 function privateSnapDir(cwd: string): string {
@@ -36,10 +38,16 @@ function privateSnapDir(cwd: string): string {
 }
 
 /**
- * Delete the oldest snapshots this module wrote until at most `maxFiles` files and
- * `maxBytes` total remain. Files we did not write are left untouched.
+ * Delete the oldest snapshots this module wrote until at most `maxFiles` files,
+ * `maxBytes` total and `MAX_SNAP_AGE_MS` of age remain. Files we did not write
+ * are left untouched.
  */
-export function pruneSnaps(dir: string, maxFiles = MAX_SNAPS, maxBytes = MAX_SNAPS_BYTES): void {
+export function pruneSnaps(
+  dir: string,
+  maxFiles = MAX_SNAPS,
+  maxBytes = MAX_SNAPS_BYTES,
+  nowMs = Date.now(),
+): void {
   const candidates: Array<{ file: string; bytes: number; createdAt: number }> = [];
   for (const name of fs.readdirSync(dir)) {
     if (!name.endsWith(".json")) continue;
@@ -54,11 +62,13 @@ export function pruneSnaps(dir: string, maxFiles = MAX_SNAPS, maxBytes = MAX_SNA
     } catch {}
   }
   candidates.sort((a, b) => b.createdAt - a.createdAt || a.file.localeCompare(b.file));
-  // Walk newest first; keep each snapshot while the count and the bytes kept so far fit.
-  // The newest snapshot is always kept, even if one session alone exceeds maxBytes.
+  // Walk newest first; keep each snapshot while the count, the bytes kept so far
+  // and the age all fit. The newest snapshot is always kept, even if one session
+  // alone exceeds maxBytes or the clock moved past its age.
   let kept = 0;
   for (const [index, c] of candidates.entries()) {
-    if (index === 0 || (index < maxFiles && kept + c.bytes <= maxBytes)) {
+    const expired = nowMs - c.createdAt > MAX_SNAP_AGE_MS;
+    if (index === 0 || (!expired && index < maxFiles && kept + c.bytes <= maxBytes)) {
       kept += c.bytes;
       continue;
     }
@@ -124,7 +134,7 @@ export function writeSnapEntries(cwd: string, entries: unknown[], reason: string
     fs.closeSync(fd);
     // Retention is best effort: a prune failure must never cost the snapshot just written.
     try {
-      pruneSnaps(dir);
+      pruneSnaps(dir, MAX_SNAPS, MAX_SNAPS_BYTES, nowMs);
     } catch {}
     return meta;
   } catch (error) {
@@ -167,7 +177,7 @@ function stringifySnapEntry(entry: unknown, index: number): string {
   }
 }
 
-export function writeSnap(cwd: string, payload: string, fileName: string): string {
+export function writeSnap(cwd: string, payload: string, fileName: string, nowMs = Date.now()): string {
   const dir = privateSnapDir(cwd);
   const file = path.join(dir, fileName);
   fs.writeFileSync(file, payload, { mode: 0o600 });
@@ -175,7 +185,7 @@ export function writeSnap(cwd: string, payload: string, fileName: string): strin
     fs.chmodSync(file, 0o600);
   } catch {}
   try {
-    pruneSnaps(dir);
+    pruneSnaps(dir, MAX_SNAPS, MAX_SNAPS_BYTES, nowMs);
   } catch {}
   return file;
 }

@@ -67,6 +67,11 @@ fn main() {
         "frames" => main_frames(&args[1..]),
         other => die(&format!("unknown command '{other}'")),
     }
+    // Local retention after a successful run: the rollback copy kept by an
+    // install is removed now that the replacement has proven it runs, and
+    // abandoned stage/temp files are swept. Local files only; the update
+    // check itself is unchanged and still runs last.
+    update::sweep_local_data(ultracompress_core::VERSION);
     // Notice/worker scheduling happens only after the command's JSON is out.
     update::after_command(ultracompress_core::VERSION, interactive);
 }

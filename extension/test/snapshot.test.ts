@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildSnap, listSnaps, pruneSnaps, readSnapMeta, snapFileName, writeSnap, writeSnapEntries } from "../src/snapshot.ts";
+import { MAX_SNAP_AGE_MS, MAX_SNAPS, MAX_SNAPS_BYTES, buildSnap, listSnaps, pruneSnaps, readSnapMeta, snapFileName, writeSnap, writeSnapEntries } from "../src/snapshot.ts";
 
 const ENTRIES = [
   { type: "message", role: "user", text: "hello" },
@@ -37,14 +37,14 @@ describe("ultracompress snapshots (instant-snap compatible)", () => {
       const first = writeSnapEntries(dir, ENTRIES, "old", 1_700_000_000_000).file;
       const middle = buildSnap([], "middle", 1_700_000_001_000);
       const newest = buildSnap([], "new", 1_700_000_002_000);
-      const middleFile = writeSnap(dir, middle.payload, middle.meta.file);
+      const middleFile = writeSnap(dir, middle.payload, middle.meta.file, middle.meta.createdAt);
       expect(statSync(snaps).mode & 0o777).toBe(0o700);
       expect(statSync(join(dir, ".steak-pi")).mode & 0o777).toBe(0o700);
       expect(statSync(join(snaps, first)).mode & 0o777).toBe(0o600);
       expect(statSync(middleFile).mode & 0o777).toBe(0o600);
-      writeSnap(dir, newest.payload, newest.meta.file);
+      writeSnap(dir, newest.payload, newest.meta.file, newest.meta.createdAt);
       expect(listSnaps(dir).length).toBe(3);
-      pruneSnaps(snaps, 2, 1024 * 1024);
+      pruneSnaps(snaps, 2, 1024 * 1024, 1_700_000_002_500);
       const remaining = listSnaps(dir).map((m) => m.file).sort();
       expect(remaining).toHaveLength(2);
       expect(remaining).toContain(snapFileName(1_700_000_002_000));
@@ -60,13 +60,47 @@ describe("ultracompress snapshots (instant-snap compatible)", () => {
       const pad = "x".repeat(4000);
       const files = [0, 1, 2].map((i) => {
         const snap = buildSnap([{ type: "message", role: "user", text: pad }], `s${i}`, 1_700_000_000_000 + i * 1000);
-        return writeSnap(dir, snap.payload, snap.meta.file);
+        return writeSnap(dir, snap.payload, snap.meta.file, snap.meta.createdAt);
       });
       const each = statSync(files[2]).size;
       // Budget fits the two newest snapshots but not all three.
-      pruneSnaps(join(dir, ".steak-pi", "snaps"), 20, each * 2 + 10);
+      pruneSnaps(join(dir, ".steak-pi", "snaps"), 20, each * 2 + 10, 1_700_000_002_500);
       const remaining = listSnaps(dir).map((m) => m.file).sort();
       expect(remaining).toEqual([snapFileName(1_700_000_001_000), snapFileName(1_700_000_002_000)].sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("expires snapshots older than the retention age, keeping the newest one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ultracompress-age-"));
+    try {
+      const now = Date.now();
+      const newest = buildSnap([], "age-newest", now);
+      writeSnap(dir, newest.payload, newest.meta.file, now);
+      const snaps = join(dir, ".steak-pi", "snaps");
+      const nowFile = newest.meta.file;
+      const halfCreated = now - MAX_SNAP_AGE_MS / 2;
+      const expiredCreated = now - MAX_SNAP_AGE_MS - 86_400_000;
+      const halfFile = snapFileName(halfCreated);
+      const expiredFile = snapFileName(expiredCreated);
+      // Written directly so each fixture keeps the timestamp it was built with.
+      for (const [file, createdAt] of [[halfFile, halfCreated], [expiredFile, expiredCreated]] as const) {
+        writeFileSync(join(snaps, file), buildSnap([], file, createdAt).payload, { mode: 0o600 });
+      }
+
+      // At the oldest file's own clock nothing has expired yet.
+      pruneSnaps(snaps, MAX_SNAPS, MAX_SNAPS_BYTES, expiredCreated);
+      expect(listSnaps(dir).map((m) => m.file).sort()).toEqual([nowFile, halfFile, expiredFile].sort());
+
+      // A month from now the aged snapshot goes; the half-aged one stays.
+      pruneSnaps(snaps, MAX_SNAPS, MAX_SNAPS_BYTES, now);
+      expect(listSnaps(dir).map((m) => m.file).sort()).toEqual([nowFile, halfFile].sort());
+
+      // Once everything is past the limit the newest is still kept, so a
+      // long-idle project keeps one restorable file rather than none.
+      pruneSnaps(snaps, MAX_SNAPS, MAX_SNAPS_BYTES, now + MAX_SNAP_AGE_MS * 10);
+      expect(listSnaps(dir).map((m) => m.file)).toEqual([nowFile]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

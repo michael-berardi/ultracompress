@@ -109,7 +109,7 @@ from `~/.claude/settings.json` only if nothing else uses function hooks.
 This plugin runs the local binary on this session's transcript; it sends no data
 itself, has no telemetry and writes no files of its own. Claude Code's own
 network calls, transcript and logs are controlled by Claude Code. See the
-[main README](../README.md#privacy) for details.
+[privacy statement](../PRIVACY.md) for details.
 
 ## UltraTerm users
 
