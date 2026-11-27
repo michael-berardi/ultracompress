@@ -113,11 +113,11 @@ class PrivacyTest(unittest.TestCase):
         self.assertLessEqual(len(lines), 6)
         self.assertIn("[PRIVACY.md](PRIVACY.md)", privacy)
         self.assertIn("no telemetry", privacy)
-        self.assertIn("sends nothing over the network", privacy)
+        self.assertIn("makes no automatic network traffic", privacy)
 
     def test_privacy_md_holds_the_detail_and_the_file_inventory(self):
         privacy = _text(ROOT / "PRIVACY.md")
-        for phrase in ("sends nothing", "no telemetry", "0700", "0600", "64 MiB",
+        for phrase in ("makes no automatic network traffic", "no telemetry", "0700", "0600", "64 MiB",
                        "SHA-256", "model provider", "$TMPDIR", "rm -rf"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, privacy)
