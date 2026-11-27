@@ -4,7 +4,7 @@ UltraCompress compacts conversations locally: the brief is built by a Rust
 binary with no model call, and the tool has no telemetry. This page is the full
 statement; the [README](README.md#privacy) keeps the short form.
 
-- **One automatic request, one purpose.** UltraCompress makes no automatic network traffic
+- **One automatic check, clear purpose.** UltraCompress makes no automatic network traffic
   except one anonymous check of this repository's public GitHub
   latest-release record, at most once per 24 hours per machine. If you opt into
   automatic updates, the background worker also downloads the release archive

@@ -138,7 +138,7 @@ carries a lifetime:
 ## Privacy documentation layout (round-5 N5, resolved)
 
 The 2026-11-26 contract asks for a short Privacy notice. `README.md` now keeps
-the short form: six lines that state the single anonymous check, the absence of
+the short form: three lines that state the single anonymous check, the absence of
 telemetry, the owner-only permissions and the bounded retention, and that link
 [`PRIVACY.md`](../PRIVACY.md). All detail lives there as one table of every local
 write with its contents, its lifetime and its deletion command, so the short

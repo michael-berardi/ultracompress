@@ -4,7 +4,7 @@
 
 CLI/core 0.8.3; Pi, Claude Code and Hermes adapters 0.8.3.
 
-- Split the privacy documentation: `README.md` now keeps a six-line `## Privacy`
+- Split the privacy documentation: `README.md` now keeps a short `## Privacy`
   section that links the new [`PRIVACY.md`](PRIVACY.md). That page is the single
   detailed statement and carries one table of every local write — Pi settings and
   snapshots, the optional Pi debug file, the Hermes recall archive, the shared
